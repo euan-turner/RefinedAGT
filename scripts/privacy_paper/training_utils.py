@@ -80,6 +80,8 @@ def train_with_config(
         criterion = torch.nn.CrossEntropyLoss()
     elif config.loss == "binary_cross_entropy":  # binary classification with 1 output logit
         criterion = torch.nn.BCEWithLogitsLoss()
+    elif config.loss == "mse":  # regression
+        criterion = torch.nn.MSELoss()
     else:
         raise ValueError(f"Unknown loss function {config.loss}")
 
@@ -97,6 +99,8 @@ def train_with_config(
             y_pred = model(x)
             if config.loss == "cross_entropy":
                 loss = criterion(y_pred, y)
+            elif config.loss == "mse":
+                loss = criterion(y_pred, y.reshape(y_pred.shape).float())
             else:  # config.loss == "binary_cross_entropy":
                 loss = criterion(y_pred.squeeze().float(), y.squeeze().float())
             loss.backward()

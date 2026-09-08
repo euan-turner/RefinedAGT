@@ -58,6 +58,20 @@ hyperparameters.
 
 Abstract gradient training often requires training with large batchsizes. This can lead to out-of-memory errors on GPUs with limited memory. To mitigate this, the package provides a `fragsize` parameter in the configuration object. This parameter controls the size of fragments that each batch is split into before computing bounds over the gradients. This separates physical steps (computing gradients over each batch fragment) and logic steps (applying the certified training update rules) while keeping memory usage low. This logic is handled internally using the `gradient_accumulation` module. Larger values of `fragsize` will reduce the number of fragments per batch and improve performance, but will require more memory. If you encounter out-of-memory errors, try reducing the value of `fragsize`.
 
+### Input-ball refinement (poisoning)
+
+`poison_certified_training` can partition the feature-poisoning `epsilon`-ball into a grid of sub-boxes, propagate each leaf through the ordinary bounding pass, and hull the per-sample gradient bounds over the leaves. This never widens the certified bound and is **off by default**: leave `AGTConfig.input_refinement` at `None` to reproduce the shipped bound exactly. Enable it with an `InputRefinementConfig`:
+
+```python
+config = agt.AGTConfig(
+    n_epochs=10, learning_rate=0.02, loss="cross_entropy",
+    k_poison=10, epsilon=0.05, clip_gamma=1.0,
+    input_refinement=agt.InputRefinementConfig(n_splits=2, n_dims=4),  # 16 leaves per fragment
+)
+```
+
+The cost is `n_splits ** n_dims` bounding passes per fragment — exponential in the split dimensions and flat in the batch size — so it is guarded by `max_leaves`, which raises rather than warns. Memory is controlled through `fragsize` exactly as above (leaves are stacked into the fragment's headroom, `leaf_chunk` overrides). Refinement only tightens the certificate when the per-sample gradient endpoints are not already pinned by `clip_gamma`; there is no cheap way to predict this, and it is not enabled automatically.
+
 ### Floating point stability
 
 The implementation of the verification algorithms in this package do not take into account floating point soundness. Under certain conditions, the returned bounds may not be sound due to issues with numerical precision. Any issues will be detected and logged as warnings or errors by the package. If you encounter such a warning, it is recommended to switch to using a double precision data type (e.g. `torch.float64`) for the model parameters and training data. If warnings persist after switching to double precision, this indicates a potential error.
@@ -67,6 +81,10 @@ The implementation of the verification algorithms in this package do not take in
 The training batchsize has a significant effect on the tightness of the bounds at each iteration. Therefore, the certified training methods require a fixed batchsize for the entire training process and any incomplete batches are discarded. When using PyTorch dataloaders, this typically results in the last batch per epoch being skipped, which may lead to unexpected behavior.
 
 ## Changelog
+
+### Unreleased
+
+- Added optional input-ball refinement for `poison_certified_training` via `AGTConfig.input_refinement` (off by default, bit-identical to the shipped bound when disabled).
 
 ### 2025-02-05
 

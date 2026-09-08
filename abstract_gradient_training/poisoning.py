@@ -8,6 +8,7 @@ import gc
 import torch
 
 from abstract_gradient_training import training_utils
+from abstract_gradient_training import input_refinement
 from abstract_gradient_training import interval_arithmetic
 from abstract_gradient_training.gradient_accumulation import PoisoningGradientAccumulator
 from abstract_gradient_training.configuration import AGTConfig
@@ -46,6 +47,15 @@ def poison_certified_training(
     optimizer = config.get_bounded_optimizer(bounded_model)
     training_utils.log_run_start(config, agt_type="poison")
 
+    # validate the input-ball refinement configuration against the concrete model once, up front
+    if config.input_refinement is not None:
+        entry_dims = input_refinement.validate_input_refinement(bounded_model, config)
+        LOGGER.info(
+            "Input-ball refinement active: %s leaves/sample over split dims %s",
+            config.input_refinement.n_splits ** len(entry_dims),
+            entry_dims,
+        )
+
     if config.paired_poison:
         k_poison = max(config.k_poison, config.label_k_poison)
     else:
@@ -65,6 +75,14 @@ def poison_certified_training(
         # possibly terminate early
         if config.early_stopping_callback(bounded_model):
             break
+
+        # select the input-ball split dimensions once per step: the sensitivity heuristic reads the
+        # nominal first-layer weights, which are fixed within a step but change between steps.
+        split_dims = (
+            input_refinement.select_split_dims(bounded_model, config.epsilon, config.input_refinement)
+            if config.input_refinement is not None
+            else None
+        )
 
         # evaluate the network on the validation data and log the result
         if val_iterator is not None:
@@ -111,7 +129,7 @@ def poison_certified_training(
             )
             # compute the input+weight perturbed gradients
             frag_grads_iwp_l, frag_grads_iwp_u = training_utils.compute_batch_gradients(
-                bounded_model, batch_frag, label_frag, config, nominal=False, poisoned=True
+                bounded_model, batch_frag, label_frag, config, nominal=False, poisoned=True, split_dims=split_dims
             )
             # apply gradient clipping
             frag_grads_wp_l, frag_grads_n, frag_grads_wp_u = training_utils.propagate_clipping(

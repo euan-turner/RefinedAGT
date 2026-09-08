@@ -35,6 +35,30 @@ EXCLUDE_FIELDS = [
     "bounded_optimizer_fn",
 ]
 
+class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
+    """
+    Partitioning of the feature-poisoning ball for poison-certified training.
+
+    Setting ``AGTConfig.input_refinement`` to ``None`` reproduces the shipped bound exactly; 
+    a populated config always refines (``n_splits == 1`` is rejected as a no-op).
+    """
+
+    n_splits: int = pydantic.Field(2, ge=2, description="Equal cuts per split dimension")
+    n_dims: int = pydantic.Field(2, ge=1, description="Number of input coordinates to split")
+    strategy: Literal["sensitivity", "widest", "first"] = pydantic.Field(
+        "sensitivity", description="How to choose the split coordinates; see input_refinement.select_split_dims"
+    )
+    max_leaves: int = pydantic.Field(
+        256, ge=1, description="Refuse configurations whose leaf count exceeds this (a memory/cost guard)"
+    )
+    leaf_chunk: int | None = pydantic.Field(
+        None, ge=1, description="Leaves stacked into one bounding call; None derives it from fragsize"
+    )
+
+    @property
+    def n_leaves(self) -> int:
+        """Leaf count from the requested split, before capping by the true input dimension."""
+        return self.n_splits**self.n_dims
 
 class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True):
     """Configuration class for the abstract gradient training module."""
@@ -67,6 +91,12 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
     paired_poison: bool = pydantic.Field(
         False, description="Whether the label and feature poisoning are paired (i.e. the same samples are poisoned)."
     )
+    
+    input_refinement: InputRefinementConfig | None = pydantic.Field(
+        None,
+        description="Optional refinement of the feature-poisoning ball. None reproduces the shipped bound.",
+    )
+
     # unlearning parameters
     k_unlearn: int = pydantic.Field(0, ge=0, description="Number of removals per batch to be certified")
     # privacy and dp-sgd parameters
@@ -88,6 +118,22 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
         lambda *args: None,
         description="Callback function that takes a BoundedModel and is called at the start of each iteration.",
     )
+
+    @pydantic.model_validator(mode="after")
+    def _validate_input_refinement(self) -> "AGTConfig":
+        """Reject input_refinement combined with a threat model that leaves nothing to partition."""
+        if self.input_refinement is not None:
+            if self.epsilon == 0:
+                raise ValueError(
+                    "input_refinement is set but epsilon == 0: there is no feature-poisoning ball to "
+                    "partition. Set input_refinement=None for the baseline bound."
+                )
+            if self.k_poison == 0:
+                raise ValueError(
+                    "input_refinement is set but k_poison == 0: the feature-poisoning term is "
+                    "inactive. Set input_refinement=None for the baseline bound."
+                )
+        return self
 
     @property
     def val_loss(self) -> str:
@@ -142,4 +188,8 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
         # drop fields that don't change the results we are trying to store, for example
         for field in drop_fields:
             self_dict.pop(field, None)
+        # drop input_refinement when disabled so existing config hashes are preserved exactly; an
+        # enabled refinement changes the result, so it stays in the hash.
+        if self_dict.get("input_refinement") is None:
+            self_dict.pop("input_refinement", None)
         return self_dict

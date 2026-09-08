@@ -31,6 +31,58 @@ def get_blobs(cluster_pos: float, cluster_std: float, batchsize: int, seed: int)
     return train_dataset, test_dataset
 
 
+def get_halfmoons(batchsize: int, seed: int, noise: float = 0.1, sep: float = 0.2, dtype=torch.float64):
+    """Dataloaders for the halfmoons dataset. Adds polynomial features and a vertical separation to the moons."""
+    x, y = sklearn.datasets.make_moons(noise=noise, random_state=seed, n_samples=int(batchsize * 1.25))
+    # separate the moons to make the classes easier to distinguish
+    x[y == 0, 1] += sep
+    x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=0.2, random_state=seed)
+    # add quadratic and cubic features
+    x_train = np.hstack((x_train, x_train**2, x_train**3))
+    x_test = np.hstack((x_test, x_test**2, x_test**3))
+    # convert to pytorch tensors
+    train_dataset = torch.utils.data.TensorDataset(torch.from_numpy(x_train).to(dtype), torch.from_numpy(y_train))
+    test_dataset = torch.utils.data.TensorDataset(torch.from_numpy(x_test).to(dtype), torch.from_numpy(y_test))
+    return train_dataset, test_dataset
+
+
+def get_uci(name: str, seed: int, n_samples: int | None = None, dtype=torch.float32):
+    """
+    Train/test datasets for a UCI regression task from the uci_datasets package.
+
+    Features are standardised and targets min-max scaled to [0, 1] using training-set statistics
+    only, matching scripts/poisoning_paper/train_uci.py. Standardising the features means an l_inf
+    poisoning radius is expressed in units of feature standard deviation and is comparable across
+    coordinates, which matters when a refinement selects which coordinates to split.
+
+    Args:
+        name: uci_datasets dataset name, e.g. "protein" (41157 x 9) or "kin40k" (36000 x 8).
+        seed: seed for the training subsample when n_samples is given.
+        n_samples: optional cap on the number of training samples.
+    """
+    import uci_datasets
+
+    x_train, y_train, x_test, y_test = uci_datasets.Dataset(name).get_split(split=0)
+
+    x_mu, x_std = x_train.mean(axis=0), x_train.std(axis=0)
+    x_train, x_test = (x_train - x_mu) / x_std, (x_test - x_mu) / x_std
+    y_min, y_range = y_train.min(axis=0), y_train.max(axis=0) - y_train.min(axis=0)
+    y_train, y_test = (y_train - y_min) / y_range, (y_test - y_min) / y_range
+
+    x_train = torch.from_numpy(x_train).to(dtype)
+    y_train = torch.from_numpy(y_train).to(dtype)
+    x_test = torch.from_numpy(x_test).to(dtype)
+    y_test = torch.from_numpy(y_test).to(dtype)
+
+    if n_samples is not None and n_samples < x_train.size(0):
+        idx = torch.randperm(x_train.size(0), generator=torch.Generator().manual_seed(seed))[:n_samples]
+        x_train, y_train = x_train[idx], y_train[idx]
+
+    train_dataset = torch.utils.data.TensorDataset(x_train, y_train)
+    test_dataset = torch.utils.data.TensorDataset(x_test, y_test)
+    return train_dataset, test_dataset
+
+
 def get_octmnist(exclude_classes=None, balanced=False, encode: torch.nn.Sequential | None = None):
     """
     Get OCT MedMNIST dataset as a binary classification problem of class 3 (normal) vs classes 0, 1, 2.

@@ -8,6 +8,7 @@ from collections.abc import Iterable, Iterator
 import torch
 
 from abstract_gradient_training import interval_arithmetic
+from abstract_gradient_training import input_refinement
 from abstract_gradient_training.bounded_models import BoundedModel
 from abstract_gradient_training.bounded_losses import BoundedLoss
 from abstract_gradient_training.configuration import AGTConfig
@@ -24,6 +25,7 @@ def compute_batch_gradients(
     config: AGTConfig,
     nominal: Literal[True],
     poisoned: bool = False,
+    split_dims: list[int] | None = None,
 ) -> list[torch.Tensor]: ...
 
 
@@ -35,6 +37,7 @@ def compute_batch_gradients(
     config: AGTConfig,
     nominal: Literal[False],
     poisoned: bool = False,
+    split_dims: list[int] | None = None,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]: ...
 
 
@@ -45,6 +48,7 @@ def compute_batch_gradients(
     config: AGTConfig,
     nominal: bool,
     poisoned: bool = False,
+    split_dims: list[int] | None = None,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]] | list[torch.Tensor]:
     """
     Helper function to calculate gradients of the loss function. If the `nominal` flag is set to True, the function
@@ -60,6 +64,9 @@ def compute_batch_gradients(
         nominal (bool): Whether to compute nominal gradients or bounds on the gradients.
         poisoned (bool, optional): Whether to additionally compute bounds wrt the poisoning adversary stored in the
             config. Defaults to False.
+        split_dims (list[int] | None, optional): Flattened input coordinates to partition when
+            `poisoned` is True and `config.input_refinement` is set. If None, they are selected here
+            from the current nominal weights; the poisoning trainer passes a per-step choice instead.
 
     Returns:
         tuple[list[torch.Tensor], list[torch.Tensor]] | list[torch.Tensor]: If `nominal` is True, return the list of
@@ -82,16 +89,36 @@ def compute_batch_gradients(
     label_k_poison = config.label_k_poison if poisoned else 0
     poison_target_idx = config.poison_target_idx if poisoned else -1
 
-    # compute the bounded gradients
-    grads_l, grads_u = bounded_model.bound_backward_combined(
-        batch - epsilon,
-        batch + epsilon,
-        labels,
-        bounded_loss,
-        label_k_poison=label_k_poison,
-        label_epsilon=label_epsilon,
-        poison_target_idx=poison_target_idx,
-    )
+    # compute the bounded gradients, optionally refining the feature-poisoning ball into a grid of
+    # sub-boxes and hulling the per-sample gradient bounds over the leaves
+    if poisoned and config.input_refinement is not None:
+        refinement_cfg = config.input_refinement
+        if split_dims is None:
+            split_dims = input_refinement.select_split_dims(bounded_model, config.epsilon, refinement_cfg)
+        leaf_chunk = input_refinement.resolve_leaf_chunk(refinement_cfg, config.fragsize, batch.size(0))
+        grads_l, grads_u = input_refinement.refined_bound_backward_combined(
+            bounded_model,
+            batch,
+            labels,
+            bounded_loss,
+            epsilon=epsilon,
+            dims=split_dims,
+            n_splits=refinement_cfg.n_splits,
+            leaf_chunk=leaf_chunk,
+            label_k_poison=label_k_poison,
+            label_epsilon=label_epsilon,
+            poison_target_idx=poison_target_idx,
+        )
+    else:
+        grads_l, grads_u = bounded_model.bound_backward_combined(
+            batch - epsilon,
+            batch + epsilon,
+            labels,
+            bounded_loss,
+            label_k_poison=label_k_poison,
+            label_epsilon=label_epsilon,
+            poison_target_idx=poison_target_idx,
+        )
     interval_arithmetic.validate_interval(grads_l, grads_u, msg="gradient bounds")
     return grads_l, grads_u
 
@@ -269,11 +296,14 @@ def propagate_clipping(
             clip_factor_l = (gamma / (norms_u + 1e-6)).clamp(max=1.0)
             clip_factor_u = (gamma / (norms_l + 1e-6)).clamp(max=1.0)
             interval_arithmetic.validate_interval(clip_factor_l, clip_factor_u, msg="clip factor")
-            # compute an interval over the clipped input
+            # compute an interval over the clipped input. the clip factor is per-sample, so it is
+            # reshaped to broadcast over however many dimensions the parameter gradient has (weight
+            # gradients are [batch, out, in] but bias gradients are [batch, out]).
+            broadcast = (-1,) + (1,) * (x_l[i].dim() - 1)
             x_l[i], x_u[i] = interval_arithmetic.propagate_elementwise(
-                x_l[i], x_u[i], clip_factor_l.view(-1, 1, 1), clip_factor_u.view(-1, 1, 1)
+                x_l[i], x_u[i], clip_factor_l.view(broadcast), clip_factor_u.view(broadcast)
             )
-            x[i] = x[i] * clip_factor.view(-1, 1, 1)
+            x[i] = x[i] * clip_factor.view(broadcast)
         interval_arithmetic.validate_interval(x_l, x_u, msg="clipped input")
     else:
         raise ValueError(f"Clipping method {method} not recognised.")
@@ -321,6 +351,16 @@ def log_run_start(config: AGTConfig, agt_type: Literal["poison", "privacy", "unl
             config.poison_target_idx,
         )
         LOGGER.debug("\tPaired poisoning: %s", config.paired_poison)
+        if config.input_refinement is not None:
+            r = config.input_refinement
+            LOGGER.info(
+                "\tInput-ball refinement: n_splits=%s, n_dims=%s, strategy=%s, max_leaves=%s, leaf_chunk=%s",
+                r.n_splits,
+                r.n_dims,
+                r.strategy,
+                r.max_leaves,
+                r.leaf_chunk,
+            )
     elif agt_type == "privacy":
         LOGGER.debug("\tPrivacy parameter: k_private=%s", config.k_private)
     elif agt_type == "unlearning":
