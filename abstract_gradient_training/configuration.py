@@ -6,7 +6,8 @@ The configuration class also provides some QOL logging functions for logging AGT
 
 import logging
 import hashlib
-from typing import Literal
+import math
+from typing import Annotated, Literal
 from collections.abc import Callable
 
 import pydantic
@@ -34,6 +35,42 @@ EXCLUDE_FIELDS = [
     "val_loss",
     "bounded_optimizer_fn",
 ]
+
+
+class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
+    """
+    Partitioning of the feature-poisoning ball for poison-certified training.
+
+    ``splits`` gives the number of equal pieces each selected input coordinate is cut into, in the
+    order ``strategy`` ranks the coordinates: ``[2] * 4`` bisects four coordinates (16 leaves) and
+    ``[3] * 5 + [2] * 5`` cuts the five highest-ranked into three and the next five into two.
+
+    Setting ``AGTConfig.input_refinement`` to ``None`` reproduces the unrefined bound exactly.
+    """
+
+    splits: list[Annotated[int, pydantic.Field(ge=2)]] = pydantic.Field(
+        min_length=1, description="Equal cuts for each selected input coordinate, highest-ranked first"
+    )
+    strategy: Literal["sensitivity", "first"] = pydantic.Field(
+        "sensitivity", description="How to choose the split coordinates; see input_refinement.select_split_dims"
+    )
+    max_leaves: int = pydantic.Field(
+        256, ge=1, description="Refuse configurations whose leaf count exceeds this (a memory/cost guard)"
+    )
+    leaf_chunk: int | None = pydantic.Field(
+        None, ge=1, description="Leaves stacked into one bounding call; None derives it from fragsize"
+    )
+    # repr=False keeps the field out of AGTConfig.hash(): sharding does not change the result
+    shard_leaves: bool = pydantic.Field(
+        False,
+        repr=False,
+        description="Split the leaves across the ranks of the initialised torch.distributed process group",
+    )
+
+    @property
+    def n_leaves(self) -> int:
+        """Number of leaves the partition has: the product of ``splits``."""
+        return math.prod(self.splits)
 
 
 class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True):
@@ -67,6 +104,10 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
     paired_poison: bool = pydantic.Field(
         False, description="Whether the label and feature poisoning are paired (i.e. the same samples are poisoned)."
     )
+    input_refinement: InputRefinementConfig | None = pydantic.Field(
+        None,
+        description="Optional refinement of the feature-poisoning ball. None reproduces the unrefined bound.",
+    )
     # unlearning parameters
     k_unlearn: int = pydantic.Field(0, ge=0, description="Number of removals per batch to be certified")
     # privacy and dp-sgd parameters
@@ -88,6 +129,22 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
         lambda *args: None,
         description="Callback function that takes a BoundedModel and is called at the start of each iteration.",
     )
+
+    @pydantic.model_validator(mode="after")
+    def _validate_input_refinement(self) -> "AGTConfig":
+        """Reject input_refinement combined with a threat model that leaves nothing to partition."""
+        if self.input_refinement is not None:
+            if self.epsilon == 0:
+                raise ValueError(
+                    "input_refinement is set but epsilon == 0: there is no feature-poisoning ball to "
+                    "partition. Set input_refinement=None for the baseline bound."
+                )
+            if self.k_poison == 0:
+                raise ValueError(
+                    "input_refinement is set but k_poison == 0: the feature-poisoning term is "
+                    "inactive. Set input_refinement=None for the baseline bound."
+                )
+        return self
 
     @property
     def val_loss(self) -> str:
@@ -142,4 +199,8 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
         # drop fields that don't change the results we are trying to store, for example
         for field in drop_fields:
             self_dict.pop(field, None)
+        # drop input_refinement when disabled so existing config hashes are preserved exactly; an
+        # enabled refinement changes the result, so it stays in the hash.
+        if self_dict.get("input_refinement") is None:
+            self_dict.pop("input_refinement", None)
         return self_dict

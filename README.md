@@ -8,6 +8,11 @@ Install the package using pip:
 
 ```pip install git+https://github.com/psosnin/AbstractGradientTraining```
 
+For development and the experiment scripts, use [uv](https://docs.astral.sh/uv/) with the locked environment
+(Linux x86_64 and aarch64; torch is taken from the CUDA 13.0 index on x86_64 and the CUDA 12.6 index on aarch64):
+
+```uv sync --frozen --extra experiments```
+
 ## Usage
 
 To train a PyTorch model with abstract gradient training, follow these steps:
@@ -58,6 +63,22 @@ hyperparameters.
 
 Abstract gradient training often requires training with large batchsizes. This can lead to out-of-memory errors on GPUs with limited memory. To mitigate this, the package provides a `fragsize` parameter in the configuration object. This parameter controls the size of fragments that each batch is split into before computing bounds over the gradients. This separates physical steps (computing gradients over each batch fragment) and logic steps (applying the certified training update rules) while keeping memory usage low. This logic is handled internally using the `gradient_accumulation` module. Larger values of `fragsize` will reduce the number of fragments per batch and improve performance, but will require more memory. If you encounter out-of-memory errors, try reducing the value of `fragsize`.
 
+### Input-ball refinement (poisoning)
+
+`poison_certified_training` can partition the feature-poisoning `epsilon`-ball into a grid of sub-boxes ("leaves"), bound each leaf with the ordinary bounding pass, and hull the per-sample gradient bounds over the leaves. The result is sound and never wider than the unrefined bound, and it is **off by default**: leave `AGTConfig.input_refinement` at `None` to get the unrefined bound exactly. Enable it with an `InputRefinementConfig`:
+
+```python
+config = agt.AGTConfig(
+    n_epochs=10, learning_rate=0.02, loss="cross_entropy",
+    k_poison=10, epsilon=0.05,
+    input_refinement=agt.InputRefinementConfig(splits=[2, 2, 2, 2]),  # bisect 4 input features: 16 leaves
+)
+```
+
+`splits` gives the number of pieces each selected input feature is cut into, most sensitive feature first (ranked by the first-layer weights; `strategy="first"` takes the leading features instead). `[3] * 5 + [2] * 5` cuts five features into three and five more into two. The cost is one bounding pass per leaf, `prod(splits)` of them: exponential in the number of features cut and flat in the batch size. It is guarded by `max_leaves`, which raises rather than warns. Leaves are stacked `leaf_chunk` at a time into one bounding call (by default as many as fit in `fragsize` rows), and `shard_leaves=True` splits them across the ranks of an initialised `torch.distributed` process group with the same result.
+
+The soundness argument, its assumptions and the floating-point limitation are in [docs/input_refinement_soundness.md](docs/input_refinement_soundness.md). The experiments and figure of the refinement paper are in [scripts/refinement_paper](scripts/refinement_paper). To reproduce its results from a fresh clone, follow [REPRODUCTION.md](REPRODUCTION.md).
+
 ### Floating point stability
 
 The implementation of the verification algorithms in this package do not take into account floating point soundness. Under certain conditions, the returned bounds may not be sound due to issues with numerical precision. Any issues will be detected and logged as warnings or errors by the package. If you encounter such a warning, it is recommended to switch to using a double precision data type (e.g. `torch.float64`) for the model parameters and training data. If warnings persist after switching to double precision, this indicates a potential error.
@@ -67,6 +88,11 @@ The implementation of the verification algorithms in this package do not take in
 The training batchsize has a significant effect on the tightness of the bounds at each iteration. Therefore, the certified training methods require a fixed batchsize for the entire training process and any incomplete batches are discarded. When using PyTorch dataloaders, this typically results in the last batch per epoch being skipped, which may lead to unexpected behavior.
 
 ## Changelog
+
+### Unreleased
+
+- Added optional input-ball refinement for `poison_certified_training` via `AGTConfig.input_refinement` (off by default; the bound is unchanged when disabled).
+- Fixed `clip_method="norm"` for bias gradients, which were reshaped as if every gradient were `[batch, out, in]`.
 
 ### 2025-02-05
 

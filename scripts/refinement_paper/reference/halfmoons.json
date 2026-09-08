@@ -1,0 +1,265 @@
+{
+ "task": "halfmoons",
+ "title": "half-moons ($d=6$)",
+ "cells": [
+  {
+   "k": 200,
+   "epsilon": 0.01,
+   "baseline": {
+    "task": "halfmoons",
+    "k": 200,
+    "epsilon": 0.01,
+    "rung": "unrefined",
+    "splits": null,
+    "leaves": 1,
+    "dtype": "float64",
+    "violation": 0.0,
+    "seconds": 1.5353705883026123,
+    "world_size": 1,
+    "peak_gib": 0.29543304443359375,
+    "metrics": {
+     "cert_acc": 0.38600000739097595,
+     "nominal_acc": 0.956000030040741,
+     "best_acc": 1.0,
+     "box_width": 45.238869182401245
+    }
+   },
+   "rungs": [
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "2^6",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 64,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 0.8881580829620361,
+     "world_size": 1,
+     "peak_gib": 6.840179920196533,
+     "metrics": {
+      "cert_acc": 0.5540000200271606,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 1.0,
+      "box_width": 29.953480321155364
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "3^6",
+     "splits": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+     ],
+     "leaves": 729,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 1.8632423877716064,
+     "world_size": 1,
+     "peak_gib": 20.165174961090088,
+     "metrics": {
+      "cert_acc": 0.6700000166893005,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 25.527894450932678
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "4^6",
+     "splits": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+     ],
+     "leaves": 4096,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 6.687353134155273,
+     "world_size": 1,
+     "peak_gib": 20.165174961090088,
+     "metrics": {
+      "cert_acc": 0.706000030040741,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 23.446838276698486
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "5^6",
+     "splits": [
+      5,
+      5,
+      5,
+      5,
+      5,
+      5
+     ],
+     "leaves": 15625,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 22.8000648021698,
+     "world_size": 1,
+     "peak_gib": 20.164350986480713,
+     "metrics": {
+      "cert_acc": 0.7360000610351562,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 22.22637087785029
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "6^6",
+     "splits": [
+      6,
+      6,
+      6,
+      6,
+      6,
+      6
+     ],
+     "leaves": 46656,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 66.43127346038818,
+     "world_size": 1,
+     "peak_gib": 20.165998935699463,
+     "metrics": {
+      "cert_acc": 0.7620000243186951,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 21.423512780690153
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "8^6",
+     "splits": [
+      8,
+      8,
+      8,
+      8,
+      8,
+      8
+     ],
+     "leaves": 262144,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 96.10894131660461,
+     "world_size": 4,
+     "peak_gib": 20.165506839752197,
+     "metrics": {
+      "cert_acc": 0.7860000133514404,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 20.449564039230335
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "10^6",
+     "splits": [
+      10,
+      10,
+      10,
+      10,
+      10,
+      10
+     ],
+     "leaves": 1000000,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 355.4559636116028,
+     "world_size": 4,
+     "peak_gib": 20.16542339324951,
+     "metrics": {
+      "cert_acc": 0.800000011920929,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 19.864121476439948
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "12^6",
+     "splits": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+     ],
+     "leaves": 2985984,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 1056.3317959308624,
+     "world_size": 4,
+     "peak_gib": 20.165587425231934,
+     "metrics": {
+      "cert_acc": 0.8020000457763672,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 19.481015780661693
+     }
+    },
+    {
+     "task": "halfmoons",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "16^6",
+     "splits": [
+      16,
+      16,
+      16,
+      16,
+      16,
+      16
+     ],
+     "leaves": 16777216,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 5915.864262580872,
+     "world_size": 4,
+     "peak_gib": 20.165506839752197,
+     "metrics": {
+      "cert_acc": 0.8060000538825989,
+      "nominal_acc": 0.956000030040741,
+      "best_acc": 0.9980000257492065,
+      "box_width": 19.01880663089088
+     }
+    }
+   ]
+  }
+ ]
+}

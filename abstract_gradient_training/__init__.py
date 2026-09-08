@@ -6,7 +6,8 @@ import logging
 from abstract_gradient_training.poisoning import poison_certified_training
 from abstract_gradient_training.privacy import privacy_certified_training
 from abstract_gradient_training.unlearning import unlearning_certified_training
-from abstract_gradient_training.configuration import AGTConfig
+from abstract_gradient_training.configuration import AGTConfig, InputRefinementConfig
+from abstract_gradient_training import input_refinement
 from abstract_gradient_training import training_utils
 from abstract_gradient_training import privacy_utils
 from abstract_gradient_training import test_metrics

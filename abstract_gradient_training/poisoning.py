@@ -8,6 +8,7 @@ import gc
 import torch
 
 from abstract_gradient_training import training_utils
+from abstract_gradient_training import input_refinement
 from abstract_gradient_training import interval_arithmetic
 from abstract_gradient_training.gradient_accumulation import PoisoningGradientAccumulator
 from abstract_gradient_training.configuration import AGTConfig
@@ -46,6 +47,15 @@ def poison_certified_training(
     optimizer = config.get_bounded_optimizer(bounded_model)
     training_utils.log_run_start(config, agt_type="poison")
 
+    # validate the input-ball refinement configuration against the concrete model once, up front
+    if config.input_refinement is not None:
+        entry_dims = input_refinement.validate_input_refinement(bounded_model, config)
+        LOGGER.info(
+            "Input-ball refinement active: %s leaves/sample, split dims at entry %s",
+            config.input_refinement.n_leaves,
+            entry_dims,
+        )
+
     if config.paired_poison:
         k_poison = max(config.k_poison, config.label_k_poison)
     else:
@@ -59,12 +69,31 @@ def poison_certified_training(
     training_iterator = training_utils.dataloader_pair_wrapper(dl_train, dl_clean, config.n_epochs)
     val_iterator = training_utils.dataloader_cycle(dl_val) if dl_val is not None else None
 
+    shard_leaves = config.input_refinement is not None and config.input_refinement.shard_leaves
+
     # main training loop
     for n, (batch, labels, batch_clean, labels_clean) in enumerate(training_iterator, 1):
+        # with sharded refinement rank 0 is authoritative: every rank starts the step from rank 0's
+        # model and potentially poisoned batch, so all ranks bound their leaves under the same box.
+        # This comes before the callbacks so that they, too, see identical state on every rank.
+        if shard_leaves:
+            input_refinement.broadcast_parameters(bounded_model)
+            batch, labels = input_refinement.broadcast_batch(batch, labels, bounded_model.device)
+
         config.on_iter_start_callback(bounded_model)
         # possibly terminate early
         if config.early_stopping_callback(bounded_model):
             break
+
+        # select the input-ball split dimensions once per step: the sensitivity heuristic reads the
+        # nominal first-layer weights, which are fixed within a step but change between steps.
+        split_dims = (
+            input_refinement.select_split_dims(bounded_model, config.epsilon, config.input_refinement)
+            if config.input_refinement is not None
+            else None
+        )
+        if shard_leaves:
+            split_dims = input_refinement.broadcast_split_dims(split_dims, bounded_model.device)
 
         # evaluate the network on the validation data and log the result
         if val_iterator is not None:
@@ -111,7 +140,7 @@ def poison_certified_training(
             )
             # compute the input+weight perturbed gradients
             frag_grads_iwp_l, frag_grads_iwp_u = training_utils.compute_batch_gradients(
-                bounded_model, batch_frag, label_frag, config, nominal=False, poisoned=True
+                bounded_model, batch_frag, label_frag, config, nominal=False, poisoned=True, split_dims=split_dims
             )
             # apply gradient clipping
             frag_grads_wp_l, frag_grads_n, frag_grads_wp_u = training_utils.propagate_clipping(
@@ -134,6 +163,10 @@ def poison_certified_training(
         interval_arithmetic.validate_interval(update_l, update_u, update_n, msg=f"grad bounds, batch {n}")
         optimizer.step(update_l, update_n, update_u)
         config.on_iter_end_callback(bounded_model)
+
+    # every rank returns rank 0's final model, not its own redundant (and discarded) update
+    if shard_leaves:
+        input_refinement.broadcast_parameters(bounded_model)
 
     if val_iterator is not None:
         loss = training_utils.compute_loss(bounded_model, config.get_val_loss_fn(), *next(val_iterator))
