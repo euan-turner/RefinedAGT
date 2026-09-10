@@ -1,10 +1,12 @@
 # %%
 """
-Feature-poisoning sweep for OCT-MNIST: certified bounds with and without input-ball refinement.
+Leaf-count scaling of input-ball refinement for OCT-MNIST feature poisoning.
 
-Compares refinement to coarse interval bounding over the feature-poisoning sweep on OCT-MNIST.
-All other hyperparameters are fixed, including the pre-trained model, so the runs share the
-same nominal model, and their certified parameter boxes and test accuracy are directly comparable.
+Fixes the attack size and every training hyperparameter (including the pre-trained model, so the
+nominal model is constant) and sweeps the refinement leaf count. The eps-ball is on the 28x28
+image, so "split every input dimension" is infeasible; the schedule instead grows the number of
+split pixels first (at n_splits=2), then raises n_splits. Reports how the certified parameter box
+and certified test accuracy respond as the leaf count grows.
 """
 
 import copy
@@ -26,29 +28,38 @@ import script_utils
 
 USE_CACHED = True  # reuse cached parameter boxes keyed on config.hash(); see octmnist_train.run_with_config
 
-EPSILON = 0.01  # fixed l_inf feature-poisoning radius; octmnist_sweep.py frame 1 uses 0.01
-K_POISON_VALUES = [0, 50, 100, 200, 300, 400, 600]
+EPSILON = 0.01  # fixed l_inf feature-poisoning radius; octmnist_sweep.py uses 0.01
+K_POISON = 50  # fixed attack size, the representative point in octmnist_sweep.py
 
-# Input-ball refinement applied to the "refined" run at every k. The dense head sees a fixed conv
-# transform, so only "widest"/"first" are sound here. 2 ** 4 = 16 leaves per fragment.
-N_SPLITS = 2
-N_DIMS = 4
+# Leaf-count sweep for the refined run. The dense head sees a fixed conv transform, so only
+# "widest"/"first" are sound and "split every dimension" is out of reach for a 784-pixel input;
+# the schedule grows the number of split pixels first (at n_splits=2), then raises n_splits.
+# leaves per fragment = n_splits ** n_dims.
 STRATEGY = "widest"
+LEAF_SCHEDULE = [(2, 4), (2, 6), (2, 8), (2, 10), (2, 12)]  # 16, 64, 256, 1024, 4096 leaves
+MAX_LEAVES = 10_000_000  # raise the InputRefinementConfig cost guard for the larger rungs
+LEAF_CHUNK = None  # None -> 1 here. The fixed conv transform is re-bounded per chunk over
+#                    chunk*fragsize images, so even leaf_chunk=1 already peaks ~27 GB and
+#                    leaf_chunk>=2 OOMs a 32 GB card -- this problem is transform-bound, not
+#                    leaf-chunk-tunable. (Refinement does not move the certified metric here anyway.)
 
 DEVICE = octmnist_train.NOMINAL_CONFIG.device
 if DEVICE.startswith("cuda") and not torch.cuda.is_available():
     DEVICE = "cpu"
 
 
-def base_config(k_poison, refined):
-    """NOMINAL_CONFIG with the feature-poisoning budget set and refinement optionally enabled."""
+def make_config(refine):
+    """NOMINAL_CONFIG at the fixed attack size, with refinement enabled when ``refine`` is a
+    ``(n_splits, n_dims)`` pair (``None`` for the unrefined baseline)."""
     config = copy.deepcopy(octmnist_train.NOMINAL_CONFIG)
     config.device = DEVICE
-    config.k_poison = k_poison
+    config.k_poison = K_POISON
     config.epsilon = EPSILON
-    if refined:
+    if refine is not None:
+        n_splits, n_dims = refine
         config.input_refinement = agt.InputRefinementConfig(
-            n_splits=N_SPLITS, n_dims=N_DIMS, strategy=STRATEGY
+            n_splits=n_splits, n_dims=n_dims, strategy=STRATEGY,
+            max_leaves=MAX_LEAVES, leaf_chunk=LEAF_CHUNK,
         )
     return config
 
@@ -95,72 +106,79 @@ dataset_clean, _ = octmnist_train.get_dataset(exclude_classes=[2])
 pretrained_model = octmnist_train.get_pretrained_model()
 
 # %%
-""" Sweep: at each k, one unrefined run and one refined run, identical otherwise. """
+""" Sweep: one unrefined run, then a refined run per rung of the leaf schedule. """
 
 print(
-    f"OCT-MNIST feature poisoning | eps={EPSILON} | refinement: n_splits={N_SPLITS}, n_dims={N_DIMS} "
-    f"({N_SPLITS ** N_DIMS} leaves), strategy={STRATEGY}\n",
+    f"OCT-MNIST feature poisoning | eps={EPSILON} | k_poison={K_POISON} | strategy={STRATEGY} | "
+    f"leaf schedule {LEAF_SCHEDULE}\n",
     file=sys.stderr,
 )
 print(
-    f"  {'k':>4s}  {'box width':>12s} {'box width':>12s} {'width':>7s}   "
+    f"  {'leaves':>9s}  {'box width':>12s} {'box width':>12s} {'width':>7s}   "
     f"{'cert acc':>9s} {'cert acc':>9s}  {'nominal':>8s}",
     file=sys.stderr,
 )
 print(
-    f"  {'':>4s}  {'(baseline)':>12s} {'(refined)':>12s} {'gain':>7s}   {'(baseline)':>9s} {'(refined)':>9s}",
+    f"  {'':>9s}  {'(baseline)':>12s} {'(refined)':>12s} {'gain':>7s}   {'(baseline)':>9s} {'(refined)':>9s}",
     file=sys.stderr,
 )
 
-rows = []
-for k in tqdm.tqdm(K_POISON_VALUES):
-    base_model = run_certified(base_config(k, refined=False), pretrained_model, dataset_drusen, dataset_clean)
-    refined_model = run_certified(base_config(k, refined=True), pretrained_model, dataset_drusen, dataset_clean)
+base_model = run_certified(make_config(refine=None), pretrained_model, dataset_drusen, dataset_clean)
+base = certified_metrics(base_model, test_dataset_drusen.tensors)
 
-    base = certified_metrics(base_model, test_dataset_drusen.tensors)
+rows = []
+for n_splits, n_dims in tqdm.tqdm(LEAF_SCHEDULE):
+    refined_model = run_certified(
+        make_config(refine=(n_splits, n_dims)), pretrained_model, dataset_drusen, dataset_clean
+    )
     refined = certified_metrics(refined_model, test_dataset_drusen.tensors)
 
-    # the nominal fine-tuning trajectory is refinement-independent: same nominal model at each k
+    # the nominal fine-tuning trajectory is refinement-independent: same nominal model at every rung
     assert abs(base["nominal_acc"] - refined["nominal_acc"]) < 1e-9, (
-        f"nominal accuracy diverged at k={k}: {base['nominal_acc']} vs {refined['nominal_acc']}"
+        f"nominal accuracy diverged at {n_splits=}, {n_dims=}: "
+        f"{base['nominal_acc']} vs {refined['nominal_acc']}"
     )
 
+    leaves = n_splits ** n_dims
     width_gain = 1 - refined["box_width"] / base["box_width"] if base["box_width"] else 0.0
-    rows.append({"k": k, "baseline": base, "refined": refined, "width_gain": width_gain})
+    rows.append({"leaves": leaves, "baseline": base, "refined": refined, "width_gain": width_gain})
     print(
-        f"  {k:>4d}  {base['box_width']:12.4e} {refined['box_width']:12.4e} {width_gain:6.1%}   "
+        f"  {leaves:>9d}  {base['box_width']:12.4e} {refined['box_width']:12.4e} {width_gain:6.1%}   "
         f"{base['cert_acc_worst']:9.4f} {refined['cert_acc_worst']:9.4f}  {base['nominal_acc']:8.4f}",
         file=sys.stderr,
     )
 
 # %%
-""" Plot: certified box width and certified (worst-case) Drusen-test accuracy against k. """
+""" Plot: certified box width and certified (worst-case) Drusen-test accuracy against leaf count. """
 
-ks = [r["k"] for r in rows]
+leaves = [r["leaves"] for r in rows]
 subplots = (1, 2)
 fig, axs = plt.subplots(*subplots, layout="constrained", dpi=300)
 
-axs[0].plot(ks, [r["baseline"]["box_width"] for r in rows], marker="o",
-            color=script_utils.colours["grey"], label="baseline")
-axs[0].plot(ks, [r["refined"]["box_width"] for r in rows], marker="o",
-            color=script_utils.colours["green"], label=f"refined ({N_SPLITS ** N_DIMS} leaves)")
+axs[0].axhline(rows[0]["baseline"]["box_width"], linestyle=":",
+               color=script_utils.colours["grey"], label="baseline (no refinement)")
+axs[0].plot(leaves, [r["refined"]["box_width"] for r in rows], marker="o",
+            color=script_utils.colours["green"], label="refined")
+axs[0].set_xscale("log")
 axs[0].set_yscale("log")
-axs[0].set_xlabel("attack size ($k_\\mathrm{poison}$)")
+axs[0].set_xlabel("refinement leaves per fragment")
 axs[0].set_ylabel("certified parameter box width")
 axs[0].legend(fontsize="x-small")
 
-axs[1].plot(ks, [r["baseline"]["cert_acc_worst"] for r in rows], marker="o",
-            color=script_utils.colours["grey"], label="baseline")
-axs[1].plot(ks, [r["refined"]["cert_acc_worst"] for r in rows], marker="o",
-            color=script_utils.colours["green"], label=f"refined ({N_SPLITS ** N_DIMS} leaves)")
-axs[1].plot(ks, [r["baseline"]["nominal_acc"] for r in rows], linestyle="--",
-            color=script_utils.colours["orange"], label="nominal")
-axs[1].set_xlabel("attack size ($k_\\mathrm{poison}$)")
+axs[1].axhline(rows[0]["baseline"]["cert_acc_worst"], linestyle=":",
+               color=script_utils.colours["grey"], label="baseline (no refinement)")
+axs[1].plot(leaves, [r["refined"]["cert_acc_worst"] for r in rows], marker="o",
+            color=script_utils.colours["green"], label="refined")
+axs[1].axhline(rows[0]["baseline"]["nominal_acc"], linestyle="--",
+               color=script_utils.colours["orange"], label="nominal")
+axs[1].set_xscale("log")
+axs[1].set_xlabel("refinement leaves per fragment")
 axs[1].set_ylabel("certified Drusen-test accuracy")
 axs[1].set_ylim(0, 1.0)
 axs[1].legend(fontsize="x-small")
 
-fig.suptitle(rf"OCT-MNIST feature poisoning, $\epsilon={EPSILON}$", fontsize="small")
+fig.suptitle(rf"OCT-MNIST: certified tightness vs refinement leaves, $k={K_POISON}$, $\epsilon={EPSILON}$",
+             fontsize="small")
 script_utils.apply_figure_size(fig, script_utils.set_size(0.9, subplots, shrink_height=1.6), dpi=300)
 fig_dir = script_utils.make_dirs()[3]
 path = f"{fig_dir}/octmnist_refinement_sweep.pdf"

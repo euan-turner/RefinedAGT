@@ -41,3 +41,7 @@ scripts/privacy_paper_old/octmnist_sweeps.py
 scripts/privacy_paper_old/octmnist_train.py
 scripts/privacy_paper_old/privacy_helpers.py
 scripts/privacy_paper_old/script_utils.py
+
+
+scripts/old_experiments
+scripts/*.md

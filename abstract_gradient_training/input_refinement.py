@@ -177,9 +177,8 @@ def refined_bound_backward_combined(
     Per-sample parameter-gradient bounds under the feature-poisoning adversary, refined over a grid
     of input sub-boxes.
 
-    Drop-in tightening of
-    ``bounded_model.bound_backward_combined(batch - epsilon, batch + epsilon, labels, loss, ...)``:
-    the return shape is identical (per-sample bounds in the library's flat parameter order) and the
+    Drop-in tightening of ``bounded_model.bound_backward_combined(batch - epsilon, batch + epsilon, labels, loss, ...)``:
+    the return shape is identical (per-sample bounds in flat parameter order) and the
     bounds are never wider. Reduces to exactly that call when ``n_splits <= 1`` or ``dims`` selects
     no coordinate, so a disabled refinement is bit-identical to the shipped path.
 

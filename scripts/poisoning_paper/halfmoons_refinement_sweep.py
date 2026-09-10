@@ -1,10 +1,11 @@
 # %%
 """
-Feature-poisoning sweep for half-moons: certified bounds with and without input-ball refinement.
+Leaf-count scaling of input-ball refinement for half-moons feature poisoning.
 
-Compares refinement to coarse interval bounding over the feature-poisoning sweep on half-moons.
-All other hyperparameters are fixed, so the runs share the same nominal model, and their certified
-parameter boxes and test accuracy are directly comparable.
+Fixes the attack size and every training hyperparameter (so the nominal model is constant) and
+sweeps the refinement leaf count, following the "split every input dimension first, then raise the
+number of splits per dimension" schedule. Reports how the certified parameter box and certified
+test accuracy tighten as the leaf count grows.
 """
 
 import copy
@@ -31,13 +32,15 @@ DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 HIDDEN_DIM = 128
 BATCHSIZE = 3000
 EPSILON = 0.01  # fixed l_inf feature-poisoning radius; halfmoons.py frame 1 uses 0.01
-K_POISON_VALUES = [50, 100, 200, 300]  # halfmoons.py frame 1 sweep
+K_POISON = 200  # fixed attack size, from the halfmoons.py frame 1 sweep [50, 100, 200, 300]
 
-# Input-ball refinement configuration applied to the "refined" run at every k. 2 ** 4 = 16 leaves
-# per fragment, the headline setting from scripts/poisoning_paper/input_ball_refinement.py.
-N_SPLITS = 2
-N_DIMS = 4
+# Leaf-count sweep for the refined run. Priority: split every input dimension first, then raise
+# the number of splits per dimension. Half-moons has 6 features, so every entry splits all 6 and
+# only n_splits grows. leaves per fragment = n_splits ** n_dims.
 STRATEGY = "sensitivity"
+LEAF_SCHEDULE = [(2, 6), (3, 6), (4, 6), (5, 6), (6, 6)]  # 64, 729, 4096, 15625, 46656 leaves
+MAX_LEAVES = 10_000_000  # raise the InputRefinementConfig cost guard for the larger rungs
+LEAF_CHUNK = 192  # leaves stacked per bounding call; 192 peaks ~22 GB here (256 OOMs a 32 GB card)
 
 
 def get_dataloaders(train_batchsize, test_batchsize=500, random_state=0, noise=0.1, n_samples=3000, sep=0.2):
@@ -109,75 +112,80 @@ BASE_CONFIG = AGTConfig(
 )
 
 # %%
-""" Sweep: at each k, one unrefined run and one refined run, identical otherwise. """
+""" Sweep: one unrefined run, then a refined run per rung of the leaf schedule. """
 
 print(
-    f"halfmoons feature poisoning | eps={EPSILON} | refinement: n_splits={N_SPLITS}, n_dims={N_DIMS} "
-    f"({N_SPLITS ** N_DIMS} leaves), strategy={STRATEGY}\n"
+    f"halfmoons feature poisoning | eps={EPSILON} | k_poison={K_POISON} | strategy={STRATEGY} | "
+    f"leaf schedule {LEAF_SCHEDULE}\n"
 )
 header = (
-    f"  {'k':>4s}  {'box width':>12s} {'box width':>12s} {'width':>7s}   "
+    f"  {'leaves':>9s}  {'box width':>12s} {'box width':>12s} {'width':>7s}   "
     f"{'cert acc':>9s} {'cert acc':>9s}  {'nominal':>8s}"
 )
 print(header)
-print(f"  {'':>4s}  {'(baseline)':>12s} {'(refined)':>12s} {'gain':>7s}   {'(baseline)':>9s} {'(refined)':>9s}")
+print(f"  {'':>9s}  {'(baseline)':>12s} {'(refined)':>12s} {'gain':>7s}   {'(baseline)':>9s} {'(refined)':>9s}")
+
+base_config = copy.deepcopy(BASE_CONFIG)
+base_config.k_poison = K_POISON
+base_model = run_certified(MODEL, base_config, DL_TRAIN, DL_TEST)
+base = certified_metrics(base_model, X_TEST, Y_TEST)
 
 rows = []
-for k in K_POISON_VALUES:
-    base_config = copy.deepcopy(BASE_CONFIG)
-    base_config.k_poison = k
-
+for n_splits, n_dims in LEAF_SCHEDULE:
     refined_config = copy.deepcopy(BASE_CONFIG)
-    refined_config.k_poison = k
+    refined_config.k_poison = K_POISON
     refined_config.input_refinement = agt.InputRefinementConfig(
-        n_splits=N_SPLITS, n_dims=N_DIMS, strategy=STRATEGY
+        n_splits=n_splits, n_dims=n_dims, strategy=STRATEGY,
+        max_leaves=MAX_LEAVES, leaf_chunk=LEAF_CHUNK,
     )
 
-    base_model = run_certified(MODEL, base_config, DL_TRAIN, DL_TEST)
     refined_model = run_certified(MODEL, refined_config, DL_TRAIN, DL_TEST)
-
-    base = certified_metrics(base_model, X_TEST, Y_TEST)
     refined = certified_metrics(refined_model, X_TEST, Y_TEST)
 
-    # the nominal trajectory is refinement-independent: same nominal model at each k
+    # the nominal trajectory is refinement-independent: same nominal model at every rung
     assert abs(base["nominal_acc"] - refined["nominal_acc"]) < 1e-9, (
-        f"nominal accuracy diverged at k={k}: {base['nominal_acc']} vs {refined['nominal_acc']}"
+        f"nominal accuracy diverged at {n_splits=}, {n_dims=}: "
+        f"{base['nominal_acc']} vs {refined['nominal_acc']}"
     )
 
+    leaves = n_splits ** n_dims
     width_gain = 1 - refined["box_width"] / base["box_width"] if base["box_width"] else 0.0
-    rows.append({"k": k, "baseline": base, "refined": refined, "width_gain": width_gain})
+    rows.append({"leaves": leaves, "baseline": base, "refined": refined, "width_gain": width_gain})
     print(
-        f"  {k:>4d}  {base['box_width']:12.4e} {refined['box_width']:12.4e} {width_gain:6.1%}   "
+        f"  {leaves:>9d}  {base['box_width']:12.4e} {refined['box_width']:12.4e} {width_gain:6.1%}   "
         f"{base['cert_acc_worst']:9.4f} {refined['cert_acc_worst']:9.4f}  {base['nominal_acc']:8.4f}"
     )
 
 # %%
-""" Plot: certified box width and certified (worst-case) test accuracy against k. """
+""" Plot: certified box width and certified (worst-case) test accuracy against leaf count. """
 
-ks = [r["k"] for r in rows]
+leaves = [r["leaves"] for r in rows]
 subplots = (1, 2)
 fig, axs = plt.subplots(*subplots, layout="constrained", dpi=300)
 
-axs[0].plot(ks, [r["baseline"]["box_width"] for r in rows], marker="o",
-            color=script_utils.colours["grey"], label="baseline")
-axs[0].plot(ks, [r["refined"]["box_width"] for r in rows], marker="o",
-            color=script_utils.colours["green"], label=f"refined ({N_SPLITS ** N_DIMS} leaves)")
+axs[0].axhline(rows[0]["baseline"]["box_width"], linestyle=":",
+               color=script_utils.colours["grey"], label="baseline (no refinement)")
+axs[0].plot(leaves, [r["refined"]["box_width"] for r in rows], marker="o",
+            color=script_utils.colours["green"], label="refined")
+axs[0].set_xscale("log")
 axs[0].set_yscale("log")
-axs[0].set_xlabel("$k_\\mathrm{poison}$")
+axs[0].set_xlabel("refinement leaves per fragment")
 axs[0].set_ylabel("certified parameter box width")
 axs[0].legend(fontsize="x-small")
 
-axs[1].plot(ks, [r["baseline"]["cert_acc_worst"] for r in rows], marker="o",
-            color=script_utils.colours["grey"], label="baseline")
-axs[1].plot(ks, [r["refined"]["cert_acc_worst"] for r in rows], marker="o",
-            color=script_utils.colours["green"], label=f"refined ({N_SPLITS ** N_DIMS} leaves)")
-axs[1].plot(ks, [r["baseline"]["nominal_acc"] for r in rows], linestyle="--",
-            color=script_utils.colours["orange"], label="nominal")
-axs[1].set_xlabel("$k_\\mathrm{poison}$")
+axs[1].axhline(rows[0]["baseline"]["cert_acc_worst"], linestyle=":",
+               color=script_utils.colours["grey"], label="baseline (no refinement)")
+axs[1].plot(leaves, [r["refined"]["cert_acc_worst"] for r in rows], marker="o",
+            color=script_utils.colours["green"], label="refined")
+axs[1].axhline(rows[0]["baseline"]["nominal_acc"], linestyle="--",
+               color=script_utils.colours["orange"], label="nominal")
+axs[1].set_xscale("log")
+axs[1].set_xlabel("refinement leaves per fragment")
 axs[1].set_ylabel("certified worst-case test accuracy")
 axs[1].legend(fontsize="x-small")
 
-fig.suptitle(rf"half-moons feature poisoning, $\epsilon={EPSILON}$", fontsize="small")
+fig.suptitle(rf"half-moons: certified tightness vs refinement leaves, $k={K_POISON}$, $\epsilon={EPSILON}$",
+             fontsize="small")
 script_utils.apply_figure_size(fig, script_utils.set_size(0.9, subplots, shrink_height=1.6), dpi=300)
 fig_dir = script_utils.make_dirs()[3]
 path = f"{fig_dir}/halfmoons_refinement_sweep.pdf"
