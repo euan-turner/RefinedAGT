@@ -8,6 +8,11 @@ Install the package using pip:
 
 ```pip install git+https://github.com/psosnin/AbstractGradientTraining```
 
+For development and the experiment scripts, use [uv](https://docs.astral.sh/uv/) with the locked environment
+(Linux x86_64 and aarch64; torch is taken from the CUDA 13.0 index on x86_64 and the CUDA 12.6 index on aarch64):
+
+```uv sync --frozen --extra experiments```
+
 ## Usage
 
 To train a PyTorch model with abstract gradient training, follow these steps:

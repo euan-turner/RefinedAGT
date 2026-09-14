@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "abstract_gradient_training"
+version = "0.3"
+description = "Abstract gradient training of neural networks"
+readme = "README.md"
+authors = [{ name = "Philip Sosnin", email = "philipsosnin@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "torch >= 2.4.1",
+    "torchvision >= 0.19",
+    "pydantic >= 2.9",
+    "gurobipy >= 10.0",
+    "numpy >= 1.9",
+    "scipy >= 1.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/psosnin/abstract-gradient-training"
+
+[project.optional-dependencies]
+examples = [
+    "opacus >= 1.5",
+    "seaborn >= 0.13",
+    "matplotlib >= 3.9",
+    "medmnist >= 3.0",
+    "uci_datasets @ git+https://github.com/treforevans/uci_datasets.git",
+    "matplotlib-label-lines >= 0.7",
+]
+# scripts/poisoning_paper: CIFAR-10 PCA, OCT-MNIST PCA, UCI house-electric and half-moons experiments
+experiments = [
+    "scikit-learn >= 1.5",  # PCA svd_solver="covariance_eigh"
+    "tqdm",
+    "matplotlib >= 3.9",
+    "seaborn >= 0.13",
+    "scienceplots",
+    "matplotlib-label-lines >= 0.7",
+    "medmnist >= 3.0",
+    "uci_datasets @ git+https://github.com/treforevans/uci_datasets.git",
+]
+
+[dependency-groups]
+dev = ["pytest >= 8.3"]
+
+[tool.setuptools.packages.find]
+include = ["abstract_gradient_training*"]
+
+[tool.uv]
+# Local workstation (x86_64, RTX 5090) and Isambard-AI (aarch64, GH200) only.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+# One torch version on both machines, so results differ by hardware only.
+constraint-dependencies = ["torch == 2.13.0", "torchvision == 0.28.0"]
+
+# Blackwell GPUs need CUDA >= 12.8; the Isambard-AI driver (565.57) supports CUDA <= 12.7 natively.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu130", marker = "platform_machine == 'x86_64'" },
+    { index = "pytorch-cu126", marker = "platform_machine == 'aarch64'" },
+]
+torchvision = [
+    { index = "pytorch-cu130", marker = "platform_machine == 'x86_64'" },
+    { index = "pytorch-cu126", marker = "platform_machine == 'aarch64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
