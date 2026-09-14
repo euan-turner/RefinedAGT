@@ -108,6 +108,7 @@ def compute_batch_gradients(
             label_k_poison=label_k_poison,
             label_epsilon=label_epsilon,
             poison_target_idx=poison_target_idx,
+            shard=refinement_cfg.shard_leaves,
         )
     else:
         grads_l, grads_u = bounded_model.bound_backward_combined(

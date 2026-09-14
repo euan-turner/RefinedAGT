@@ -69,8 +69,17 @@ def poison_certified_training(
     training_iterator = training_utils.dataloader_pair_wrapper(dl_train, dl_clean, config.n_epochs)
     val_iterator = training_utils.dataloader_cycle(dl_val) if dl_val is not None else None
 
+    shard_leaves = config.input_refinement is not None and config.input_refinement.shard_leaves
+
     # main training loop
     for n, (batch, labels, batch_clean, labels_clean) in enumerate(training_iterator, 1):
+        # with sharded refinement rank 0 is authoritative: every rank starts the step from rank 0's
+        # model and potentially poisoned batch, so all ranks bound their leaves under the same box.
+        # This comes before the callbacks so that they, too, see identical state on every rank.
+        if shard_leaves:
+            input_refinement.broadcast_parameters(bounded_model)
+            batch, labels = input_refinement.broadcast_batch(batch, labels, bounded_model.device)
+
         config.on_iter_start_callback(bounded_model)
         # possibly terminate early
         if config.early_stopping_callback(bounded_model):
@@ -83,6 +92,8 @@ def poison_certified_training(
             if config.input_refinement is not None
             else None
         )
+        if shard_leaves:
+            split_dims = input_refinement.broadcast_split_dims(split_dims, bounded_model.device)
 
         # evaluate the network on the validation data and log the result
         if val_iterator is not None:
@@ -152,6 +163,10 @@ def poison_certified_training(
         interval_arithmetic.validate_interval(update_l, update_u, update_n, msg=f"grad bounds, batch {n}")
         optimizer.step(update_l, update_n, update_u)
         config.on_iter_end_callback(bounded_model)
+
+    # every rank returns rank 0's final model, not its own redundant (and discarded) update
+    if shard_leaves:
+        input_refinement.broadcast_parameters(bounded_model)
 
     if val_iterator is not None:
         loss = training_utils.compute_loss(bounded_model, config.get_val_loss_fn(), *next(val_iterator))

@@ -54,6 +54,13 @@ class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
     leaf_chunk: int | None = pydantic.Field(
         None, ge=1, description="Leaves stacked into one bounding call; None derives it from fragsize"
     )
+    # repr=False keeps the field out of AGTConfig.hash(): sharding does not change the result, so a
+    # sharded run shares its cache key with the single-process run of the same configuration
+    shard_leaves: bool = pydantic.Field(
+        False,
+        repr=False,
+        description="Split the leaves across the ranks of the initialised torch.distributed process group",
+    )
 
     @property
     def n_leaves(self) -> int:

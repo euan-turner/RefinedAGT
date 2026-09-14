@@ -9,7 +9,8 @@ reduces to the default bounding method.
 The refinement is exponential in the number of split dimensions (``n_splits ** len(dims)`` bounding
 passes per fragment) and flat in the batch size. It calls only ``bound_backward_combined``, so it
 composes with every ``BoundedModel`` bounding method; but is impractical when the per-leaf work
-is heavy, such as the MIP-bounded model.
+is heavy, such as the MIP-bounded model. The leaves can be sharded across the ranks of a
+``torch.distributed`` process group (``InputRefinementConfig.shard_leaves``).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import logging
 from collections.abc import Iterator
 
 import torch
+import torch.distributed as dist
 
 from abstract_gradient_training.bounded_losses import BoundedLoss
 from abstract_gradient_training.bounded_models import BoundedModel
@@ -120,9 +122,60 @@ def iter_leaf_boxes(
         yield leaf_l.view_as(batch), leaf_u.view_as(batch)
 
 
+def cut_dims_of(batch: torch.Tensor, dims: list[int], n_splits: int) -> list[int]:
+    """The coordinates of ``dims`` that are actually cut: none when ``n_splits <= 1`` or ``batch`` has
+    no feature axis, and only those inside the flattened input otherwise."""
+    if n_splits <= 1 or batch.dim() < 2:
+        return []
+    return [d for d in dims if d < batch[0].numel()]
+
+
+def leaf_boxes(
+    batch: torch.Tensor, epsilon: float, dims: list[int], n_splits: int, leaf_ids: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Corners of the leaves ``leaf_ids`` of the partitioned l_inf ball, for the whole batch, stacked
+    leaf-major.
+
+    Leaf ``i`` is the ``i``-th leaf ``iter_leaf_boxes`` yields, with identical corners: its offset
+    along the ``p``-th coordinate of ``cut_dims_of(batch, dims, n_splits)`` is the ``p``-th most
+    significant base-``n_splits`` digit of ``i``. Unlike ``iter_leaf_boxes`` any subset of leaves can
+    be built directly, which is what lets ranks take disjoint blocks of the partition.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: ``(x_l, x_u)`` of shape ``[len(leaf_ids) * B, ...]``, the
+            corners of leaf ``leaf_ids[0]`` for every sample first.
+    """
+    batchsize = batch.size(0)
+    lower = (batch - epsilon).reshape(batchsize, -1).repeat(len(leaf_ids), 1)
+    upper = (batch + epsilon).reshape(batchsize, -1).repeat(len(leaf_ids), 1)
+    cut_dims = cut_dims_of(batch, dims, n_splits)
+
+    if cut_dims:
+        places = n_splits ** torch.arange(len(cut_dims) - 1, -1, -1, device=batch.device)
+        offsets = (leaf_ids.to(batch.device)[:, None] // places) % n_splits
+        offsets = offsets.repeat_interleave(batchsize, dim=0).double()
+        # scale in float64 then cast, so the corners round exactly as iter_leaf_boxes' scalar arithmetic does
+        width = 2.0 * epsilon / n_splits
+        base = lower[:, cut_dims]
+        lower[:, cut_dims] = base + (offsets * width).to(batch.dtype)
+        upper[:, cut_dims] = base + ((offsets + 1) * width).to(batch.dtype)
+
+    shape = (len(leaf_ids) * batchsize, *batch.shape[1:])
+    return lower.view(shape), upper.view(shape)
+
+
+def leaf_block(n_leaves: int, rank: int, world_size: int) -> tuple[int, int]:
+    """The contiguous ``[start, stop)`` block of leaf ids that ``rank`` of ``world_size`` propagates.
+    Blocks differ in size by at most one and are empty when there are more ranks than leaves."""
+    return rank * n_leaves // world_size, (rank + 1) * n_leaves // world_size
+
+
 def _propagate_chunk(
     bounded_model: BoundedModel,
-    chunk: list[tuple[torch.Tensor, torch.Tensor]],
+    x_l: torch.Tensor,
+    x_u: torch.Tensor,
+    n_chunk: int,
     labels: torch.Tensor,
     loss: BoundedLoss,
     batchsize: int,
@@ -132,10 +185,8 @@ def _propagate_chunk(
     hull_l: list[torch.Tensor] | None,
     hull_u: list[torch.Tensor] | None,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-    """Propagate one group of leaves as a single batched call and fold it into the running hull."""
-    n_chunk = len(chunk)
-    x_l = torch.cat([leaf[0] for leaf in chunk], dim=0)
-    x_u = torch.cat([leaf[1] for leaf in chunk], dim=0)
+    """Propagate one group of ``n_chunk`` leaves, stacked leaf-major in ``x_l``/``x_u``, as a single
+    batched call and fold it into the running hull."""
     y = labels.repeat(n_chunk, *([1] * (labels.dim() - 1)))
 
     grads_l, grads_u = bounded_model.bound_backward_combined(
@@ -172,6 +223,7 @@ def refined_bound_backward_combined(
     label_k_poison: int = 0,
     label_epsilon: float = 0.0,
     poison_target_idx: int = -1,
+    shard: bool = False,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     """
     Per-sample parameter-gradient bounds under the feature-poisoning adversary, refined over a grid
@@ -185,31 +237,87 @@ def refined_bound_backward_combined(
     Leaves are propagated in groups of ``leaf_chunk``, stacked into the batch dimension so each
     group is one batched bounding call, then hulled at the per-sample gradient. Chunking does not
     change the result: ``amin``/``amax`` are associative and exact.
+
+    With ``shard``, each rank of the default ``torch.distributed`` process group propagates only its
+    ``leaf_block`` of the partition and the per-rank hulls are combined with a MIN/MAX all-reduce, so
+    every rank returns the full hull. The caller must give every rank the same model, batch and
+    ``dims`` (see ``broadcast_parameters``, ``broadcast_batch`` and ``broadcast_split_dims``).
     """
     batchsize = batch.size(0)
     chunk_size = max(1, leaf_chunk)
+    n_leaves = n_splits ** len(cut_dims_of(batch, dims, n_splits))
+    start, stop = 0, n_leaves
+    if shard:
+        start, stop = leaf_block(n_leaves, dist.get_rank(), dist.get_world_size())
+
     hull_l: list[torch.Tensor] | None = None
     hull_u: list[torch.Tensor] | None = None
-    chunk: list[tuple[torch.Tensor, torch.Tensor]] = []
-
-    for leaf in iter_leaf_boxes(batch, epsilon, dims, n_splits):
-        chunk.append(leaf)
-        if len(chunk) < chunk_size:
-            continue
+    for chunk_start in range(start, stop, chunk_size):
+        leaf_ids = torch.arange(chunk_start, min(chunk_start + chunk_size, stop))
+        x_l, x_u = leaf_boxes(batch, epsilon, dims, n_splits, leaf_ids)
         hull_l, hull_u = _propagate_chunk(
-            bounded_model, chunk, labels, loss, batchsize,
-            label_k_poison, label_epsilon, poison_target_idx, hull_l, hull_u,
-        )
-        chunk = []
-
-    if chunk:
-        hull_l, hull_u = _propagate_chunk(
-            bounded_model, chunk, labels, loss, batchsize,
+            bounded_model, x_l, x_u, len(leaf_ids), labels, loss, batchsize,
             label_k_poison, label_epsilon, poison_target_idx, hull_l, hull_u,
         )
 
+    if shard:
+        return _all_reduce_hull(bounded_model, batchsize, hull_l, hull_u)
     assert hull_l is not None and hull_u is not None
     return hull_l, hull_u
+
+
+def _all_reduce_hull(
+    bounded_model: BoundedModel,
+    batchsize: int,
+    hull_l: list[torch.Tensor] | None,
+    hull_u: list[torch.Tensor] | None,
+) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    """Combine per-rank hulls into the hull over every rank's leaves, on every rank. A rank that
+    propagated no leaves contributes the identity of MIN (+inf) and MAX (-inf)."""
+    shapes = [(batchsize, *p.shape) for p in bounded_model.param_n]
+    if hull_l is None or hull_u is None:
+        options = dict(dtype=bounded_model.dtype, device=bounded_model.device)
+        hull_l = [torch.full(s, float("inf"), **options) for s in shapes]
+        hull_u = [torch.full(s, float("-inf"), **options) for s in shapes]
+
+    # one flat buffer per bound, so each fragment costs two collectives rather than two per parameter
+    flat_l = torch.cat([g.reshape(-1) for g in hull_l])
+    flat_u = torch.cat([g.reshape(-1) for g in hull_u])
+    dist.all_reduce(flat_l, op=dist.ReduceOp.MIN)
+    dist.all_reduce(flat_u, op=dist.ReduceOp.MAX)
+    sizes = [g.numel() for g in hull_l]
+    hull_l = [g.view(s) for g, s in zip(flat_l.split(sizes), shapes)]
+    hull_u = [g.view(s) for g, s in zip(flat_u.split(sizes), shapes)]
+    return hull_l, hull_u
+
+
+def broadcast_parameters(bounded_model: BoundedModel) -> None:
+    """
+    Overwrite every rank's nominal parameters and parameter bounds with rank 0's, in place.
+
+    The sharded hull mixes leaves bounded on different ranks, so it is only sound if every rank
+    bounds them under the same parameter box. Broadcasting enforces that directly rather than relying
+    on identical data order and bitwise-deterministic kernels across ranks.
+    """
+    for param in bounded_model.param_n + bounded_model.param_l + bounded_model.param_u:
+        dist.broadcast(param, src=0)
+
+
+def broadcast_batch(
+    batch: torch.Tensor, labels: torch.Tensor, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Rank 0's batch and labels, on ``device``, on every rank."""
+    batch, labels = batch.to(device), labels.to(device)
+    dist.broadcast(batch, src=0)
+    dist.broadcast(labels, src=0)
+    return batch, labels
+
+
+def broadcast_split_dims(split_dims: list[int], device: torch.device) -> list[int]:
+    """Rank 0's split dimensions, on every rank."""
+    dims = torch.tensor(split_dims, dtype=torch.int64, device=device)
+    dist.broadcast(dims, src=0)
+    return dims.tolist()
 
 
 def resolve_leaf_chunk(cfg: InputRefinementConfig, fragsize: int, n_rows: int) -> int:
@@ -249,6 +357,12 @@ def validate_input_refinement(bounded_model: BoundedModel, config: AGTConfig) ->
         LOGGER.warning(
             "input_refinement with clip_method='norm' is sound but strictly looser than clipping "
             "inside each leaf (assumption A2, scripts/SHARED_GRID_PARTITION.md section 7)."
+        )
+
+    if cfg.shard_leaves and not (dist.is_available() and dist.is_initialized()):
+        raise ValueError(
+            "input_refinement.shard_leaves requires an initialised torch.distributed process group "
+            "(e.g. launch with torchrun and call torch.distributed.init_process_group)."
         )
 
     dims = select_split_dims(bounded_model, config.epsilon, cfg)
