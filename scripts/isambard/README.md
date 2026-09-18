@@ -1,144 +1,206 @@
-# Isambard-AI runbook: sharded poison-certified training
+# Input-ball refinement for poison-certified training: hypotheses, results, reproduction
 
-Purpose: the ordered steps, job scripts and checks for running the poisoning-paper refinement
-experiments -- CIFAR-10 PCA, OCT-MNIST PCA, UCI house-electric and half-moons -- on Isambard-AI, with
-input-ball refinement leaves sharded data-parallel across the GPUs of one node.
-
-Design docs: [../CIFAR_PCA_EXPERIMENT_DESIGN.md](../CIFAR_PCA_EXPERIMENT_DESIGN.md) (experiments E0-E3,
-cost model, library sharding L1-L5), [../SHARED_GRID_PARTITION.md](../SHARED_GRID_PARTITION.md)
-(soundness of refinement). Both are gitignored (`scripts/*.md`); this file is not.
+Purpose: the hypotheses tested by the poisoning-paper refinement experiments, the result for each one
+as run on Isambard-AI in September 2026, and how to rerun them. The experiments cover CIFAR-10 on PCA
+features, OCT-MNIST on PCA features, UCI house-electric and half-moons.
 
 Key external dependencies: Slurm, uv, torch 2.13.0 (`+cu126` on aarch64, from `uv.lock`), NCCL via
 `torchrun --standalone`.
 
-Legend: **[local]** workstation, **[login]** Isambard login node, **[job]** Slurm batch job.
+All experiment scripts are in [`../poisoning_paper/`](../poisoning_paper/), and all job scripts are in
+this directory. Every script's header docstring states its hypothesis and mechanism in full. This file
+summarises them.
 
 ---
 
-## 0. Facts this runbook relies on
+## 1. Terms
+
+- **Threat model.** In every training batch, up to `k` samples may have their input features moved
+  anywhere within an l_inf ball of radius `eps`. The attacker has full knowledge and can adapt.
+- **Certificate.** Abstract Gradient Training returns a parameter box that contains every model any
+  such attack could produce. It reports:
+  - **Certified accuracy / cross-entropy / MSE:** the worst case over the box.
+  - **Certified clean accuracy:** exposes a model that has collapsed onto one class.
+  - **Box width:** the sum of the per-parameter interval widths. Smaller means tighter.
+- **Refinement.** Each poisoned sample's eps-ball is cut along its `n_dims` most sensitive input
+  coordinates into `n_splits` pieces each. That gives `n_splits^n_dims` **leaves**, which are bounded
+  separately and then combined. **Bisecting** means `n_splits = 2`. The **gain** is the relative
+  reduction in box width against the unrefined run at the same attack.
+- The nominal model (trained with no attack) is identical across attacks and refinement settings;
+  every sweep asserts this.
+- **Soundness.** Every run reported a floating-point bound violation of 0.0, so no float64 reruns
+  were needed.
+
+The dataset-specific setup (splits, features, model, hyperparameter selection) is in the docstrings of
+[`cifar_pca.py`](../poisoning_paper/cifar_pca.py), [`octmnist_pca.py`](../poisoning_paper/octmnist_pca.py)
+and [`uci_refinement.py`](../poisoning_paper/uci_refinement.py).
+
+Figures are written to `$AGT_ROOT/.figures/`. The local copy of this campaign's outputs is in
+`scripts/poisoning_paper/.isambard3/` (gitignored): figures in `isambard-figures/`, job logs and
+result records in `isambard-logs3/`.
+
+---
+
+## 2. Hypotheses and results
+
+Verdicts: **holds**, **partly holds** or **does not hold**. Unless stated otherwise, numbers are on the
+test split. "(inferred)" marks a hypothesis that was not written down before the runs; it was
+reconstructed from the script's design.
+
+### 2.1 CIFAR-10 on PCA features
+
+Binary vehicle-vs-animal classification. Automobile images are the poisonable data. The model is
+`d -> H ReLU -> 1`, with hyperparameters selected per `d` on a validation split by
+[`cifar_pca_selection.py`](../poisoning_paper/cifar_pca_selection.py). Every run is launched through
+[`cifar_pca_run.py`](../poisoning_paper/cifar_pca_run.py). The run list is
+[`cifar_pca_manifest.py`](../poisoning_paper/cifar_pca_manifest.py). Nominal model at d=20: held-out
+accuracy 0.795, clean 0.789.
+
+**Threat grid:** d=20, k in {10, 25, 50, 100, 200} x eps in {0.005, 0.01, 0.02, 0.05, 0.1}. Each cell
+has four runs: unrefined; top 12 bisected (2^12 leaves); all 20 bisected (2^20); and unrefined at eps/2.
+Script: [`cifar_pca_threat_sweep.py`](../poisoning_paper/cifar_pca_threat_sweep.py). Figure:
+`cifar_pca_threat_sweep.pdf`.
+
+| | Hypothesis | Verdict | Result |
+|---|---|---|---|
+| H1 | The certificate is informative across the grid, and `k` degrades it more than `eps` | partly holds | `k` dominates: at eps=0.05 the box grows 15x from k=10 to 200 (1.61 to 24.7), while at k=50 it grows 2.3x across a 20x range of eps (3.55 to 8.25). At k=10, eps barely matters (certified acc 0.786 to 0.777). Informative up to k=100: certified acc is at least 0.646. It is not informative at k=200, eps of 0.05 or more: certified acc 0.51-0.54 and certified clean acc 0.42-0.47. |
+| H2 | Bisecting every coordinate gives a modest gain: about 5-7% width and at most +0.02 certified acc | partly holds | Up to k=100: 2.2-7.2% width, at most +0.010 acc. At k=200 the gain is larger: 5.2-11.1% width, up to +0.027 acc (k=200, eps=0.05: 0.536 to 0.563). |
+| H2b | Bisect-all falls well short of the unrefined eps/2 run | holds | In every cell. The eps/2 reduction is 11.5-46.4%, against 2.2-11.1% for bisect-all. At k=100, eps=0.05: 16.6% against 6.6%. |
+| H3 | The gain peaks at eps 0.02-0.05 and falls at 0.1 | partly holds | Holds up to k=100: the peak is at 0.05 for k of 50 or less and at 0.02 for k=100, and every k falls at 0.1. At k=200 the gain is largest at the smallest eps (11.1% at 0.005) and falls monotonically. |
+| H4 | The gain grows with `k` | holds | Monotone in `k` at every eps. Strongest at eps=0.005 (2.2% to 11.1%), weakest at eps=0.1 (4.6% to 5.2%). |
+
+**Refinement depth:** d=20, k=100, eps=0.05. A bisection ladder (2^4 to 2^20 leaves) against
+equal-cost alternatives that cut fewer coordinates more finely. Script:
+[`cifar_pca_leaf_sweep.py`](../poisoning_paper/cifar_pca_leaf_sweep.py). Figure:
+`cifar_pca_leaf_sweep.pdf`.
+
+| | Hypothesis | Verdict | Result |
+|---|---|---|---|
+| H2 | The gain grows steadily and modestly with bisected coordinates, to about 6% at all 20 | holds | 1.09% (2^4), 2.41% (2^8), 3.69% (2^12), 5.09% (2^16), 6.64% (2^20): 1.1-1.6 points per 4 more coordinates. Certified acc 0.660 to 0.668; certified CE 0.639 to 0.624. |
+| H5 | At equal leaf count, bisecting more coordinates beats cutting fewer more finely | holds | At all three costs: 2^12 3.69% against 16^3 1.55%; 2^16 5.09% against 4^8 3.85%; 2^20 6.64% against 4^10 4.79%. |
+
+**Feature width:** k=100, eps=0.05 at d in {20, 22, 24}, each width using its own selected
+hyperparameters. Four runs per width: unrefined, top 12, all d, and eps/2. Script:
+[`cifar_pca_dims_sweep.py`](../poisoning_paper/cifar_pca_dims_sweep.py). Figure:
+`cifar_pca_dims_sweep.pdf`.
+
+Selection chose pre-training radius `pt_epsilon` = 0.01 at d=20 but 0.02 at d=22 and 24, and that
+radius moves box width by more than `d` does. The **pre-training-radius control**
+([`cifar_pca_pt_epsilon_control.py`](../poisoning_paper/cifar_pca_pt_epsilon_control.py)) reruns d=22
+and 24 with `pt_epsilon` = 0.01. Its results are printed as JSON lines in the `agt-pt-control-*` job
+logs; no script aggregates them.
+
+| d | `pt_epsilon` | base box | vs d=20 | top-12 gain | all-d gain | eps/2 gain | cert acc (base / all d) | nominal acc | bisect-all hours (4 GPUs) |
+|---|---|---|---|---|---|---|---|---|---|
+| 20 | 0.01 | 13.56 | 1.00 | 3.69% | 6.64% | 16.59% | 0.660 / 0.668 | 0.795 | 0.25 |
+| 22 | 0.01 | 13.92 | 1.03 | 3.27% | 6.59% | 16.78% | 0.666 / 0.671 | 0.802 | 1.08 |
+| 24 | 0.01 | 15.51 | 1.14 | 2.81% | 6.21% | 15.93% | 0.653 / 0.658 | 0.791 | 4.48 |
+| 22 | 0.02 (selected) | 10.55 | 0.78 | 3.68% | 7.05% | 18.85% | 0.691 / 0.695 | 0.786 | 1.08 |
+| 24 | 0.02 (selected) | 12.10 | 0.89 | 3.20% | 6.71% | 17.87% | 0.678 / 0.690 | 0.780 | 4.48 |
+
+| | Hypothesis | Verdict | Result |
+|---|---|---|---|
+| H6a | The bisect-all gain is roughly flat in `d` (within about 1 point) | holds | 6.64 / 6.59 / 6.21% at fixed `pt_epsilon`, a spread of 0.43 points; 6.64 / 7.05 / 6.71% at the selected radii. The top-12 gain falls with `d` (3.69 to 2.81%), because 12 of `d` coordinates is a shrinking share. |
+| H6b | The unrefined certificate loosens with `d` | holds, once `pt_epsilon` is fixed | +2.7% box width at d=22 and +14.4% at d=24. At the selected radii the effect is hidden: d=22 comes out 22% *tighter* than d=20, because raising `pt_epsilon` from 0.01 to 0.02 shrinks the box by 22-24%. |
+| H6b' | Nominal accuracy rises slightly with `d` | does not hold | 0.795 / 0.802 / 0.791 is not monotone. Differences of about 0.01 on 1000 test points are within sampling noise. |
+
+Summary figure for all three CIFAR experiments:
+[`cifar_pca_plots.py`](../poisoning_paper/cifar_pca_plots.py), writing `cifar_pca_summary.pdf`.
+
+### 2.2 OCT-MNIST on PCA features
+
+Normal vs abnormal retinal scans. Drusen scans are the poisonable data. A fixed PCA projection replaces
+the pixel-space convolutional features, so that the input is small enough to partition. The model is
+`d -> 256 ReLU -> 1`, tuned at d=16. The pipeline is
+[`octmnist_pca.py`](../poisoning_paper/octmnist_pca.py). Nominal model at d=16: Drusen accuracy
+0.932 (matching the pixel-space convolutional model), clean 0.727.
+
+| Experiment and script | Hypothesis | Verdict | Result | Figure |
+|---|---|---|---|---|
+| Feature width: k=50, eps=0.01, d in {4, ..., 20}, bisecting min(d, 12) coordinates. [`octmnist_pca_refinement_sweep.py`](../poisoning_paper/octmnist_pca_refinement_sweep.py) | With few enough coordinates to bisect all of them, refinement measurably tightens the certificate, and the gain grows with `d` (inferred) | does not hold | The gain is flat at 1.2-1.7% for every `d`, whether every coordinate is bisected or only 12 are. Certified accuracy never moves. At eps=0.01 the input ball is a small part of the box. At d=4 and 6 the fixed schedule collapses towards "abnormal everywhere" (clean acc 0.684, 0.668). | `octmnist_pca_refinement_sweep.pdf` |
+| Poisoning radius: d=16, k=50, eps in {0.005, ..., 0.2}, top 12 of 16 bisected (4096 leaves). [`octmnist_pca_epsilon_sweep.py`](../poisoning_paper/octmnist_pca_epsilon_sweep.py) | The gain grows with `eps` | holds | 0.61, 1.17, 2.30, 5.30, 9.25 and 9.66% across eps = 0.005 to 0.2, levelling off above 0.1. Certified accuracy improves only at eps of 0.1 or more (+0.008, +0.012). | `octmnist_pca_epsilon_sweep.pdf` |
+| Refinement depth: d=16, k=50, eps=0.1. Ladder 2^4 to 2^16; alternatives 8^4 and 4^8. [`octmnist_pca_leaf_sweep.py`](../poisoning_paper/octmnist_pca_leaf_sweep.py) | H1: returns diminish but do not vanish, up to bisecting all 16 | holds | 3.41% (2^4), 7.67% (2^8), 9.25% (2^12), 10.74% (2^16). Certified acc 0.852 / 0.856 / 0.856 / 0.860; certified CE keeps falling (0.5409 to 0.5375). | `octmnist_pca_leaf_sweep.pdf` |
+| (same) | H2: at equal leaf count, bisecting more coordinates beats cutting fewer more finely | partly holds | At 4096 leaves, yes: 2^12 9.25% against 8^4 6.10%. At 65536 leaves, no: 4^8 11.37% against 2^16 10.74%, at the same certified CE. | (same) |
+| Threat grid: d=15, k in {20, ..., 400} x eps in {0.01, 0.02, 0.1}, unrefined against all 15 bisected (2^15 leaves). [`octmnist_pca_threat_sweep.py`](../poisoning_paper/octmnist_pca_threat_sweep.py) | H1: the certificate degrades with `k` and `eps`, judged against the pre-trained model's Drusen accuracy of 0.316 (inferred) | holds | Unrefined certified acc falls from 0.844 to 0.676 across k at eps=0.01, and from 0.828 to 0.312 at eps=0.1. It stays above the pre-trained 0.316 in every cell except k=400, eps=0.1 (0.312 unrefined, 0.364 refined). | `octmnist_pca_threat_sweep.pdf` |
+| (same) | H2: the gain grows with `eps` and varies smoothly with `k` (inferred) | holds | The gain is set by eps and nearly constant in `k`: 1.5-2.3% at 0.01, 2.8-3.0% at 0.02, 10.2-10.5% at 0.1. The accuracy gain is largest at large `k` and `eps` (+0.040 at k=200, +0.052 at k=400, both at eps=0.1). | (same) |
+
+Model selection, from the summary figure: the pre-training radius decides whether the certificate
+means anything. At k=50, eps=0.01:
+
+| `pt_epsilon` | box width | certified acc | nominal acc | clean acc |
+|---|---|---|---|---|
+| 0.01 | 16.6 | 0.536 | 0.912 | 0.760 |
+| 0.02 | 7.80 | 0.788 | 0.908 | 0.763 |
+| 0.05 (used) | 1.06 | 0.900 | 0.932 | 0.727 |
+| 0.1 | 0.028 | 1.000 | 1.000 | 0.667 (collapsed: "abnormal everywhere") |
+
+Summary figure: [`octmnist_pca_plots.py`](../poisoning_paper/octmnist_pca_plots.py), writing
+`octmnist_pca_summary.pdf`. It leaves out the feature-width sweep.
+
+### 2.3 UCI house-electric
+
+Regression on 11 continuous features with a one-layer MLP (64 units) and MSE loss, at k=200 of each
+10000-sample batch and eps=0.01. Every one of the 11 features is cut into `n_splits` pieces. The module
+is [`uci_refinement.py`](../poisoning_paper/uci_refinement.py), runs go through
+[`uci_run.py`](../poisoning_paper/uci_run.py), and the aggregation script is
+[`uci_refinement_sweep.py`](../poisoning_paper/uci_refinement_sweep.py). Figure:
+`uci_refinement_sweep.pdf`.
+
+**Hypothesis (inferred):** once every coordinate is split, cutting each one more finely keeps
+tightening the certificate, with diminishing returns. **Holds.**
+
+| `n_splits` | leaves | box width | gain | certified MSE (nominal 0.0529) | wall time |
+|---|---|---|---|---|---|
+| unrefined | 1 | 0.444 | | 0.0649 | 18 s, 1 GPU |
+| 2 | 2048 | 0.327 | 26.3% | 0.0611 | 154 s, 1 GPU |
+| 3 | 177147 | 0.290 | 34.6% | 0.0599 | 46 min, 4 GPUs |
+| 4 | 4194304 | 0.272 | 38.7% | 0.0593 | 17.6 h, 4 GPUs |
+
+### 2.4 Half-moons
+
+Binary classification on 2-D half-moons with quadratic and cubic features appended (6 inputs), a
+`6 -> 128 ReLU -> 2` model, k=200, eps=0.01. Every one of the 6 features is cut into `n_splits` pieces.
+Script: [`halfmoons_refinement_sweep.py`](../poisoning_paper/halfmoons_refinement_sweep.py). It has no
+cache; its job log and `halfmoons_refinement_sweep.pdf` are the result.
+
+**Hypothesis (inferred):** as UCI, finer cuts on every coordinate keep tightening the certificate,
+with diminishing returns. **Holds**, with by far the largest gains of any dataset.
+
+| `n_splits` | leaves | box width (unrefined 45.2) | gain | certified acc (unrefined 0.386, nominal 0.956) |
+|---|---|---|---|---|
+| 2 | 64 | 30.0 | 33.8% | 0.554 |
+| 3 | 729 | 25.5 | 43.6% | 0.670 |
+| 4 | 4096 | 23.4 | 48.2% | 0.706 |
+| 5 | 15625 | 22.2 | 50.9% | 0.736 |
+| 6 | 46656 | 21.4 | 52.6% | 0.762 |
+
+### 2.5 Across datasets
+
+Refinement pays most where the input ball is a large share of the certificate and every coordinate
+can be split finely: half-moons (6 inputs, 34-53%) and UCI (11 inputs, 26-39%). On the PCA pipelines
+(15-24 inputs), bisecting every coordinate buys 2-11% of box width and at most about 0.05 of
+certified accuracy, for 10^3-10^4 times the GPU time of an unrefined run (CIFAR d=20: 2 s unrefined
+against 913 s on 4 GPUs). There, the attack size and the
+pre-training radius move the certificate far more than refinement does.
+
+---
+
+## 3. Reproducing the results
+
+Legend: **[login]** Isambard login node, **[job]** Slurm batch job.
+
+### 3.1 Platform facts
 
 | | |
 |---|---|
 | Node | 4x GH200 (aarch64 Grace + 96 GB H100-class GPU); `--gpus=1` allocates one whole superchip |
 | Driver | 565.57 (CUDA 12.7 native), hence torch `+cu126` on aarch64 |
-| Slurm | `--nodes=1 --gpus=N`, default partition, no `--account`, no `--exclusive`, max `--time` 24 h |
-| GPU cap | 4 GPUs concurrently, enforced by Slurm: jobs beyond the cap pend, nothing is rejected |
-| Login nodes | 1 core, 4 GiB per session: fine for `uv sync`, downloads, manifests; not for training or aggregation |
+| Slurm | `--nodes=1 --gpus=N`, default partition, no `--account`, max `--time` 24 h; independent jobs run on separate nodes at the same time |
+| Login nodes | 1 core, 4 GiB per session: enough for `uv sync`, downloads and manifests; not for training or aggregation |
 | Storage | `$HOME` 100 GiB (over quota blocks SSH); `$PROJECTDIR` persistent, not backed up; `$SCRATCHDIR` 5 TiB |
 | Etiquette | no `squeue`/`sinfo` polling loops (acceptable-use policy); use `sacct` after the fact |
 
-Compute nodes need no internet: the environment is installed and every dataset is staged from a login
-node (§2). CIFAR-10 is read with `download=True`, which does not touch the network when the files pass
-their integrity check; OCT-MNIST is read with `download=False` from `~/.medmnist`; the UCI data ships
-inside the `uci_datasets` package.
-
-### Execution order (checklist)
-
-1. [local] A1-A6: code changes, local checks, push (§1).
-2. [login] One-time setup and data staging (§2).
-3. [job] `smoke.sbatch` (§4.1).
-4. [job] `prepare.sbatch`: PCA bases, UCI initial model, CIFAR E0 selection at d = 20, 22, 24 (§4.2).
-5. [job] `benchmark.sbatch` (§4.3), then **decision checkpoint** (§4.4): fill in the `--time` values.
-6. [login] `production.sh` (§4.5): all production jobs with dependencies.
-7. [login] `reruns.sh` for float64 reruns and failures, until the manifests are empty (§4.6).
-8. [job] `aggregate.sbatch` (§4.7), then [local] copy results and figures back (§4.8).
-
----
-
-## 1. Code changes before Isambard [local]
-
-Nothing below exists yet. Each is a separate commit; tests are part of each.
-
-### A1. Commit and push the current work
-
-- Commit the pyproject/uv migration on its own, then the input-refinement sharding work (library,
-  tests, `cifar_pca*.py`, `octmnist_pca*.py`).
-- `refine` has diverged from `origin/refine`: `origin/refine` holds `9ed1745 input ball feature
-  refinement`, local holds `0f049f3` with the same message plus `4c61edb`. Decide whether to rebase onto
-  the remote commit or force-push the local history, then push `refine` to
-  `git@github.com:euan-turner/RefinedAGT.git`.
-
-### A2. One storage root: `$AGT_ROOT`
-
-- `script_utils.make_dirs()` (poisoning_paper): when `AGT_ROOT` is set, return and create
-  `$AGT_ROOT/{.results,.models,.data,.figures}`; otherwise keep today's directories next to the scripts.
-- `cifar_pca.dirs()`: delegate to `script_utils.make_dirs()` and drop `CIFAR_PCA_ROOT`, so CIFAR,
-  OCT-MNIST, UCI and half-moons share one root.
-- Check: `AGT_ROOT=$(mktemp -d) python -c "import script_utils; print(script_utils.make_dirs())"`.
-
-### A3. Atomic cache writes
-
-A job killed at its wall-time can leave a parameter file without its record. The next launch then
-treats the run as cached and crashes reading the record, and `cifar_pca_manifest.py --missing` never
-lists it again.
-
-- Add `script_utils.atomic_write(path, write)`. It calls `write(tmp_path)` on a sibling temporary path,
-  then `os.replace(tmp_path, path)`.
-- The temporary path keeps the original suffix (`x.npz` becomes `x.tmp<pid>.npz`), because `np.savez`
-  appends `.npz` to any path that does not end in it.
-- Write the record (`.json` / `.violation`) **before** the parameters. The parameter file's existence
-  is the cache-hit test, so it must be the last file to appear.
-- Sites:
-  - `cifar_pca.fit_pca`, `get_pretrained_model` and `train_certified`
-  - `cifar_pca_selection.py` (selection JSON)
-  - `octmnist_pca.fit_pca`, `get_pretrained_model` and `run_certified`
-  - `train_uci.get_model`
-  - the UCI run cache (A4)
-- Check: kill a cheap CIFAR run between the two writes (or delete its `.json`), relaunch, and confirm
-  it retrains instead of crashing.
-
-### A4. UCI: a sharding-aware run entry point
-
-`uci_refinement_sweep.py` trains inline, single-process, with no violation or cost record. Split it
-the way CIFAR is split:
-
-- **`uci_refinement.py` (new module).** Holds the constants now in the sweep: `SEED=15`,
-  `BATCHSIZE=10000`, `HIDDEN_LAY=1`, `HIDDEN_SIZE=64`, `MAX_ITERS=150`, `EPSILON=0.01`,
-  `K_POISON=200`, `STRATEGY`, `MAX_LEAVES`, `LEAF_CHUNK=192`, `INTERVAL_MATMUL="rump"`, and
-  `SPLIT_DIMS=11`. It also provides:
-  - `init_distributed()`, `rank()` and `world_size()`: the same pattern as `cifar_pca`, and a third
-    copy of it. That is a refactor flag for later, not part of this change.
-  - `DEVICE = f"cuda:{LOCAL_RANK}"`. Device is excluded from `AGTConfig.hash()`, so this does not
-    change cache keys.
-  - `make_config(n_splits | None)`, with `shard_leaves=world_size() > 1`.
-  - `run(n_splits | None, require_cached=False)`. Rank 0 decides the cache hit and broadcasts it.
-    Violations are counted with `octmnist_pca.count_violations` (the existing §9.3 refactor flag).
-    Rank 0 writes, atomically, the record `{"violation", "seconds", "world_size", "peak_gib"}`.
-  - `certified_metrics(bounded_model)`: the MSE metrics and box width.
-- **`uci_run.py` (new).** Usage: `[torchrun --standalone --nproc-per-node 4] uci_run.py [--n-splits N]`.
-  Omitting `--n-splits` gives the unrefined baseline. Rank 0 prints one JSON line: the record plus
-  the metrics.
-- **`uci_refinement_sweep.py`.** Becomes aggregation only: `--rungs 2 3 [4]`, reading with
-  `require_cached=True`, then the existing table and figure.
-- **Unchanged: `train_uci.get_model`.** It still loads the (small) model onto `cuda:0` on every rank
-  before `run` moves it to `DEVICE`. It writes the initial checkpoint unguarded, so `prepare.sbatch`
-  creates that checkpoint before any sharded run.
-- **Test.** Check `nvidia-smi` first: `LEAF_CHUNK=192` peaks around 27 GB. In a throwaway `AGT_ROOT`,
-  run `python uci_run.py --n-splits 2`. Then delete its cache and run
-  `torchrun --nproc-per-node 2 uci_run.py --n-splits 2`. The saved parameter boxes must be equal
-  exactly, as in test T10.
-
-### A5. Job scripts in `scripts/isambard/`
-
-Add the files listed in §4 verbatim:
-
-- `env.sh`, `nccl_check.py`
-- `smoke.sbatch`, `prepare.sbatch`, `benchmark.sbatch`
-- `cifar_cheap.sbatch`, `cifar_sharded.sbatch`
-- `octmnist_threat.sbatch`, `octmnist_single.sbatch`
-- `uci_single.sbatch`, `uci_sharded.sbatch`, `halfmoons.sbatch`
-- `aggregate.sbatch`, `production.sh`, `reruns.sh`
-
-Run `bash -n` on each.
-
-### A6. Local sharded check (design doc §7.3 step 1)
-
-If not already done: in a throwaway `AGT_ROOT`, a d=20 `--n-splits 2 --split-dims 16` CIFAR run on
-1 GPU and under `torchrun --nproc-per-node 2` produce identical parameter boxes.
-
----
-
-## 2. One-time setup [login]
+### 3.2 One-time setup [login]
 
 ```bash
 # 1. uv (installs to ~/.local/bin)
@@ -148,507 +210,104 @@ curl --location --silent --show-error --fail https://astral.sh/uv/install.sh | s
 mkdir -p "$PROJECTDIR/$USER"
 git clone -b refine git@github.com:euan-turner/RefinedAGT.git "$PROJECTDIR/$USER/AbstractGradientTraining"
 
-# 3. environment variables (also add this line to ~/.bashrc if you want it in every login shell)
+# 3. environment: repository, cache root ($AGT_ROOT), uv locations, venv
 source "$PROJECTDIR/$USER/AbstractGradientTraining/scripts/isambard/env.sh"
 
 # 4. python + locked environment (aarch64 resolves torch 2.13.0+cu126)
 cd "$AGT_REPO"
 uv python install 3.12
-uv sync --frozen --extra experiments
-source scripts/isambard/env.sh           # re-source: activates the venv now that it exists
-```
+uv sync --frozen --extra experiments       # if the login node stalls: srun --nodes=1 --gpus=1 --time=00:30:00 uv sync ...
+source scripts/isambard/env.sh             # re-source: activates the venv now that it exists
 
-If the login node's 1-core/4-GiB limit kills or stalls step 4, run it on a compute node instead:
-`srun --nodes=1 --gpus=1 --time=00:30:00 uv sync --frozen --extra experiments`. The Isambard
-distributed-training tutorial installs packages this way.
-
-```bash
-# 5. verify the GPU build (expect: 2.13.0+cu126 12.6 True GH200)
-srun --nodes=1 --gpus=1 --time=00:05:00 python -c \
-  "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-
-# 6. stage datasets
+# 5. stage datasets (or: cd "$AGT_ROOT/logs" && sbatch "$AGT_REPO/scripts/isambard/stage.sbatch")
 mkdir -p "$AGT_ROOT/.data" "$AGT_ROOT/logs" "$AGT_ROOT/manifests"
 python -c "import os, torchvision; [torchvision.datasets.CIFAR10(root=os.environ['AGT_ROOT'] + '/.data', train=t, download=True) for t in (True, False)]"
-python -c "from medmnist import OCTMNIST; OCTMNIST(split='train', download=True)"   # -> ~/.medmnist/octmnist.npz (all splits)
+python -c "from medmnist import OCTMNIST; OCTMNIST(split='train', download=True)"   # -> ~/.medmnist/octmnist.npz
 python -c "import uci_datasets; uci_datasets.Dataset('houseelectric')"              # bundled: confirms it loads
 ```
 
-**Every later session**: `source "$PROJECTDIR/$USER/AbstractGradientTraining/scripts/isambard/env.sh"`
-before `sbatch`. Jobs inherit the variables (`sbatch` exports the environment by default) and
-re-source the file to activate the venv. **Updating code**: `git pull && uv sync --frozen --extra
-experiments`, never while jobs are running from the checkout.
+In every later session, source [`env.sh`](env.sh) before `sbatch`. Jobs inherit its variables and
+re-source it to activate the venv. Update code with `git pull && uv sync --frozen --extra
+experiments`, and never while jobs are running from the checkout: a change to any config default or
+`LEAF_CHUNK` changes cache keys.
 
----
+### 3.3 Run order
 
-## 3. Caches: what must exist, and who creates it
-
-All paths are under `$AGT_ROOT`. Everything is recomputed on Isambard; nothing is copied from the
-workstation.
-
-| Pipeline | Prerequisite (created once, before parallel jobs) | Created by | Run outputs |
-|---|---|---|---|
-| CIFAR-10 PCA | raw `.data/cifar-10-batches-py/` | §2 step 6 | |
-| | PCA basis `.data/cifar_pca_*.npz` | `prepare` | |
-| | selection `.results/cifar_pca_selected_*_d{20,22,24}.json` + E0 grid runs | `prepare` | |
-| | pre-trained models `.models/cifar_pca_*.ckpt` (36 per d) | `prepare` (E0) | |
-| | | | `.results/cifar_{d}_{pretrain}_{hash}` + `.json` |
-| OCT-MNIST PCA | raw `~/.medmnist/octmnist.npz` | §2 step 6 | |
-| | PCA basis `.data/octmnist_pca_32_*.npz` (shared by all sweeps) | `prepare` | |
-| | pre-trained models `.models/octmnist_pca_*.ckpt` | first use, rank-0 guarded; the d values of the threat job (15) and the single-GPU job (4-20, not 15) do not overlap | |
-| | | | `.results/octmnist_{tag}_{d}_{pretrain}_{hash}` + `.violation` + `.json`; `octmnist_pca_threat_sweep.json` |
-| UCI | data bundled in the venv | `uv sync` | |
-| | initial model `.models/uci_15_1_64.ckpt` (same start for every run) | `prepare` | |
-| | | | `.results/uci_refinement_15_1_64_rump_{hash}` + `.json` (after A4) |
-| Half-moons | none (generated by sklearn) | | none: the sweep recomputes; its log and figure are the result |
-| All | | | figures in `.figures/`, job logs in `logs/` |
-
-Why the prerequisites are built first: the PCA bases and the UCI initial model are written by whichever
-process gets there first, and two jobs starting together would both write them.
-
----
-
-## 4. Jobs
-
-Common conventions for every `.sbatch` file:
-
-- **Submission.** Submit from `$AGT_ROOT/logs`: `cd "$AGT_ROOT/logs" && sbatch "$AGT_REPO/scripts/isambard/<file>"`.
-  `#SBATCH` lines cannot expand variables, so `--output=%x_%j.out` is relative to the submit directory.
-- **Header.** Every file starts with the block below. In the listings, `# (common header)` marks where
-  it goes; the job's own `#SBATCH` lines, shown above that marker, go directly after the header's
-  `#SBATCH` lines and before `set -euo pipefail`. Slurm ignores directives after the first command.
-  A repeated directive, like `cifar_sharded.sbatch`'s `--output`, replaces the header's.
+Submit every job from `$AGT_ROOT/logs`, because job logs (`%x_%j.out`) are written to the submit
+directory:
 
 ```bash
-#!/bin/bash
-#SBATCH --nodes=1
-#SBATCH --output=%x_%j.out
-set -euo pipefail
-: "${AGT_REPO:?source scripts/isambard/env.sh before sbatch}"
-source "$AGT_REPO/scripts/isambard/env.sh"
-cd "$AGT_REPO/scripts/poisoning_paper"
-```
-
-- **Multi-GPU launch.** Single-node, so `torchrun --standalone --nproc-per-node=N`, with no `brics/nccl`
-  modules and no `srun --mpi`. The scripts read `LOCAL_RANK` and `WORLD_SIZE`, which torchrun sets.
-
-### 4.0 Support files
-
-#### `env.sh`
-
-```bash
-# Environment for the Isambard-AI experiment jobs: repository, cache root, uv locations, venv.
-# Source on the login node before sbatch (jobs inherit it) and at the top of every job.
-export AGT_REPO="$PROJECTDIR/$USER/AbstractGradientTraining"
-export AGT_ROOT="$PROJECTDIR/$USER/agt"
-export UV_CACHE_DIR="$SCRATCHDIR/uv-cache"   # keeps multi-GB wheels out of the 100 GiB $HOME
-export UV_LINK_MODE=copy                      # cache and venv are on different filesystems
-export MPLBACKEND=Agg
-export PYTHONUNBUFFERED=1
-if [ -f "$AGT_REPO/.venv/bin/activate" ]; then
-    source "$AGT_REPO/.venv/bin/activate"
-fi
-```
-
-#### `nccl_check.py`
-
-```python
-"""
-Smoke test for NCCL on one Isambard-AI node: the MIN/MAX all-reduces the sharded refinement uses.
-
-Usage: torchrun --standalone --nproc-per-node 4 nccl_check.py
-Key external dependencies: torch.distributed (NCCL).
-"""
-
-import os
-
-import torch
-import torch.distributed as dist
-
-local_rank = int(os.environ["LOCAL_RANK"])
-torch.cuda.set_device(local_rank)
-dist.init_process_group("nccl", device_id=torch.device(f"cuda:{local_rank}"))
-rank, world_size = dist.get_rank(), dist.get_world_size()
-lower = torch.full((1 << 20,), float(rank), device="cuda")
-upper = lower.clone()
-dist.all_reduce(lower, op=dist.ReduceOp.MIN)
-dist.all_reduce(upper, op=dist.ReduceOp.MAX)
-assert lower.eq(0).all() and upper.eq(world_size - 1).all(), "all-reduce mismatch"
-if rank == 0:
-    print(f"NCCL MIN/MAX all-reduce OK on {world_size} ranks")
-dist.destroy_process_group()
-```
-
-### 4.1 `smoke.sbatch` (4 GPUs, 30 min)
-
-```bash
-#SBATCH --job-name=agt-smoke
-#SBATCH --gpus=4
-#SBATCH --time=00:30:00
-# (common header)
-nvidia-smi --list-gpus
-python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.device_count(), torch.cuda.get_device_name(0))"
-torchrun --standalone --nproc-per-node=4 "$AGT_REPO/scripts/isambard/nccl_check.py"
-cd "$AGT_REPO" && python -m pytest -q tests
-```
-
-Pass criteria:
-- 4 GH200 devices listed.
-- torch reports `2.13.0+cu126`.
-- The NCCL check prints OK.
-- pytest reports the same pass count as locally (1244 passed, 24 skipped).
-
-### 4.2 `prepare.sbatch` (4 GPUs, 6 h)
-
-```bash
-#SBATCH --job-name=agt-prepare
-#SBATCH --gpus=4
-#SBATCH --time=06:00:00
-# (common header)
-python -c "import cifar_pca; cifar_pca.fit_pca()"
-python -c "import octmnist_pca; octmnist_pca.fit_pca()"
-python -c "import train_uci, uci_refinement as u; train_uci.get_model(u.HIDDEN_LAY, u.HIDDEN_SIZE, u.SEED)"
-
-# E0: the 324-point selection grid per feature width, the pre-training grid split over the 4 GPUs.
-# Shards touch disjoint pre-trained models; the unsharded call reads the grid back and writes the selection.
-for d in 20 22 24; do
-    pids=()
-    for i in 0 1 2 3; do
-        CUDA_VISIBLE_DEVICES=$i python cifar_pca_selection.py --d "$d" --shard "$i" 4 \
-            > "$SLURM_SUBMIT_DIR/selection_d${d}_shard${i}_${SLURM_JOB_ID}.log" 2>&1 &
-        pids+=($!)
-    done
-    for pid in "${pids[@]}"; do wait "$pid"; done   # a failed shard fails the job (set -e)
-    python cifar_pca_selection.py --d "$d"
-done
-```
-
-Check: `$AGT_ROOT/.results/cifar_pca_selected_*_d{20,22,24}.json` exist, and each job log names an
-admissible selected point. E3 at d = 22 and 24 is meaningless without its own selection (design §3).
-
-### 4.3 `benchmark.sbatch` (4 GPUs, 3 h)
-
-Measures what the time requests depend on. It runs in a throwaway root, because `shard_leaves` is not
-part of the cache key and a second run would otherwise just read the first one's result.
-
-```bash
-#SBATCH --job-name=agt-benchmark
-#SBATCH --gpus=4
-#SBATCH --time=03:00:00
-# (common header)
-BENCH="$AGT_ROOT/benchmark"
-mkdir -p "$BENCH/.results" "$BENCH/.models"
-ln -sfn "$AGT_ROOT/.data" "$BENCH/.data"
-cp "$AGT_ROOT"/.results/cifar_pca_selected_*_d20.json "$BENCH/.results/"
-cp "$AGT_ROOT"/.models/cifar_pca_*n_dims=20_*.ckpt "$AGT_ROOT"/.models/uci_*.ckpt "$BENCH/.models/"
-export AGT_ROOT="$BENCH"
-OUT="$SLURM_SUBMIT_DIR/benchmark_${SLURM_JOB_ID}.jsonl"
-
-CIFAR="--pca-dims 20 --k 100 --eps 0.05 --n-splits 2"
-for n in 1 2 4; do                                   # 2^16 leaves: scaling across 1/2/4 GPUs
-    rm -f "$BENCH"/.results/cifar_20_*
-    CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((n - 1))) torchrun --standalone --nproc-per-node="$n" \
-        cifar_pca_run.py $CIFAR --split-dims 16 | tee -a "$OUT"
-done
-rm -f "$BENCH"/.results/cifar_20_*                   # 2^20 leaves on 4 GPUs: the E1 production size
-torchrun --standalone --nproc-per-node=4 cifar_pca_run.py $CIFAR --split-dims 20 | tee -a "$OUT"
-
-for n in 1 4; do                                     # UCI 2^11 leaves on 1 and 4 GPUs
-    rm -f "$BENCH"/.results/uci_refinement_*
-    CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((n - 1))) torchrun --standalone --nproc-per-node="$n" \
-        uci_run.py --n-splits 2 | tee -a "$OUT"
-done
-```
-
-### 4.4 Decision checkpoint (after the benchmark)
-
-Read `seconds`, `world_size` and `peak_gib` from `benchmark_<jobid>.jsonl`, and fill in:
-
-| Quantity | Formula | Design-doc estimate |
-|---|---|---|
-| CIFAR 4-GPU scaling | t(2^16, 1 GPU) / t(2^16, 4 GPU) | ~4 |
-| E1 bisect-all run, `T20` | measured t(2^20, 4 GPU) | ~15 min |
-| E3 d=22 bisect-all | `T20 * 4 * 24/22` | ~1.2 h |
-| E3 d=24 bisect-all | `T20 * 16 * 26/22` | ~5 h |
-| UCI (3,11) on 4 GPUs | t(2^11, 4 GPU) * 3^11/2^11 (x86.5) | "hours" on one 5090 |
-| UCI (4,11) on 4 GPUs | t(2^11, 4 GPU) * 2048 | ~24x (3,11) |
-
-Per-leaf cost scales with the parameter count `H(d+2)+1`, which is where the `24/22` and `26/22`
-factors come from. The UCI refinement is Python-loop-bound at batch 10k (see the `LEAF_CHUNK` comment).
-The Grace CPU, not the GPU, may set its speed, and the 1-vs-4 GPU UCI pair shows whether sharding helps
-it at all.
-
-Decisions:
-
-- **`--time` per class** = 2x the projection, rounded up, and at most 24:00:00. These go into
-  `production.sh` (§4.5): `T_D20`, `T_D22`, `T_D24`, `T_UCI3`, `T_UCI4`.
-- **CIFAR d=24.** If the projection exceeds ~20 h, stop. Either implement checkpoint/resume at
-  iteration boundaries (deferred in design §7.2) or drop the d=24 bisect-all run, and record which.
-- **UCI (4,11).** Include only if its projection fits under 24 h. Otherwise the UCI ladder is 2^11 and 3^11.
-- **Scaling well below 4x.** Pack several 2^16-2^20 CIFAR runs per 4-GPU job instead of one array task
-  each.
-- **Before production:** `rm -rf "$AGT_ROOT/benchmark"`.
-
-### 4.5 Production
-
-#### `cifar_cheap.sbatch` (1 GPU): every CIFAR run below 2^16 leaves, in one allocation
-
-```bash
-#SBATCH --job-name=agt-cifar-cheap
-#SBATCH --gpus=1
-#SBATCH --time=04:00:00
-# (common header)
-MANIFEST=$1
-failed=0
-while read -r args; do
-    echo "run: $args"
-    python cifar_pca_run.py $args < /dev/null || { echo "FAILED: $args"; failed=1; }   # /dev/null: python must not eat the manifest
-done < "$MANIFEST"
-exit "$failed"
-```
-
-About 69 runs: the baselines, bisect-12 screens, `eps/2` diagnostics and E2 rungs below 2^16. Each
-launch reloads CIFAR and re-projects it, which costs seconds per run.
-
-#### `cifar_sharded.sbatch` (4 GPUs, array): one CIFAR run of at least 2^16 leaves per task
-
-```bash
-#SBATCH --job-name=agt-cifar-sharded
-#SBATCH --gpus=4
-#SBATCH --output=%x_%A_%a.out
-# --array and --time are given at submission, per cost class
-# (common header)
-MANIFEST=$1
-args=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$MANIFEST")
-echo "run: $args"
-torchrun --standalone --nproc-per-node=4 cifar_pca_run.py $args
-```
-
-#### `octmnist_threat.sbatch` (4 GPUs, 3 h)
-
-```bash
-#SBATCH --job-name=agt-octmnist-threat
-#SBATCH --gpus=4
-#SBATCH --time=03:00:00
-# (common header)
-torchrun --standalone --nproc-per-node=4 octmnist_pca_threat_sweep.py
-```
-
-The sweep is 30 runs: 15 cells, each a baseline and a 2^15-leaf run. The local cost records total
-1.08 h on 2x 5090, but they cover 68 cached runs, so treat that as an upper bound.
-
-#### `octmnist_single.sbatch` (1 GPU, 8 h): the sweeps that are not sharding-aware, then the summary figure
-
-```bash
-#SBATCH --job-name=agt-octmnist-single
-#SBATCH --gpus=1
-#SBATCH --time=08:00:00
-# (common header)
-failed=0
-for script in octmnist_pca_refinement_sweep.py octmnist_pca_epsilon_sweep.py octmnist_pca_leaf_sweep.py octmnist_pca_plots.py; do
-    echo "== $script"
-    python "$script" || { echo "FAILED: $script"; failed=1; }
-done
-exit "$failed"
-```
-
-- `octmnist_pca_plots.py` trains its pre-training-radius panel, so it belongs in this job and not on a
-  login node.
-- The largest local rung (2^16 leaves) took 650 s on a 5090.
-
-#### `uci_single.sbatch` (1 GPU, 4 h)
-
-```bash
-#SBATCH --job-name=agt-uci-single
-#SBATCH --gpus=1
-#SBATCH --time=04:00:00
-# (common header)
-python uci_run.py
-python uci_run.py --n-splits 2
-```
-
-#### `uci_sharded.sbatch` (4 GPUs; `--time` at submission)
-
-```bash
-#SBATCH --job-name=agt-uci-sharded
-#SBATCH --gpus=4
-# (common header)
-torchrun --standalone --nproc-per-node=4 uci_run.py --n-splits "$1"
-```
-
-#### `halfmoons.sbatch` (1 GPU, 2 h)
-
-```bash
-#SBATCH --job-name=agt-halfmoons
-#SBATCH --gpus=1
-#SBATCH --time=02:00:00
-# (common header)
-python halfmoons_refinement_sweep.py
-```
-
-This sweep has no cache: the table in the job log and `.figures/halfmoons_refinement_sweep.pdf` are
-the result.
-
-#### `production.sh` [login]
-
-It writes frozen manifests and submits everything with dependencies. The manifests are frozen at
-submit time because `--missing` shrinks as runs finish, which would shift array indices mid-array.
-
-- **First wave:** the four 1-GPU jobs run together, which fills the cap.
-- **Then:** the 4-GPU jobs run one after another. They are chained with `afterany`, so one failure
-  does not block the rest.
-
-```bash
-#!/bin/bash
-# Submit the production runs. Run on a login node after sourcing env.sh; set the times from §4.4.
-set -euo pipefail
-: "${AGT_REPO:?source scripts/isambard/env.sh first}"
-T_D20=01:00:00; T_D22=04:00:00; T_D24=16:00:00; T_UCI3=08:00:00; T_UCI4=""   # "" = skip (4,11)
-
-S="$AGT_REPO/scripts/isambard"
-M="$AGT_ROOT/manifests/$(date +%Y%m%d-%H%M)"
-mkdir -p "$M"
-cd "$AGT_REPO/scripts/poisoning_paper"
-python cifar_pca_manifest.py --gpus 1 --missing > "$M/cifar_1gpu.txt"
-python cifar_pca_manifest.py --gpus 4 --missing > "$M/cifar_4gpu.txt"
-grep -Ev -- '--split-dims 2[24]( |$)' "$M/cifar_4gpu.txt" > "$M/cifar_4gpu_d20.txt" || true
-grep -E  -- '--split-dims 22( |$)'    "$M/cifar_4gpu.txt" > "$M/cifar_4gpu_d22.txt" || true
-grep -E  -- '--split-dims 24( |$)'    "$M/cifar_4gpu.txt" > "$M/cifar_4gpu_d24.txt" || true
-wc -l "$M"/*.txt
-
 cd "$AGT_ROOT/logs"
-submit() { sbatch --parsable "$@"; }
-first=$(submit "$S/cifar_cheap.sbatch" "$M/cifar_1gpu.txt")
-first+=":$(submit "$S/octmnist_single.sbatch")"
-first+=":$(submit "$S/uci_single.sbatch")"
-first+=":$(submit "$S/halfmoons.sbatch")"
-
-prev=$first
-chain() {   # chain <time> <sbatch file> [args...]: run after the previous 4-GPU job, whatever its outcome
-    prev=$(submit --dependency="afterany:$prev" --time="$1" "${@:2}")
-}
-chain_array() {   # chain_array <time> <manifest>
-    local n
-    n=$(wc -l < "$2")
-    if [ "$n" -gt 0 ]; then chain "$1" --array="0-$((n - 1))%1" "$S/cifar_sharded.sbatch" "$2"; fi
-}
-chain_array "$T_D20" "$M/cifar_4gpu_d20.txt"
-chain 03:00:00 "$S/octmnist_threat.sbatch"
-chain "$T_UCI3" "$S/uci_sharded.sbatch" 3
-if [ -n "$T_UCI4" ]; then chain "$T_UCI4" "$S/uci_sharded.sbatch" 4; fi
-chain_array "$T_D22" "$M/cifar_4gpu_d22.txt"
-chain_array "$T_D24" "$M/cifar_4gpu_d24.txt"
-echo "submitted; last job $prev. Manifests in $M"
+S="$AGT_REPO/scripts/isambard"
+sbatch "$S/smoke.sbatch"        # 1. check the node; wait for it to pass
+sbatch "$S/prepare.sbatch"      # 2. shared prerequisites; wait for it to finish
+bash   "$S/production.sh"       # 3. every experiment at once (prints each job id)
+sbatch "$S/aggregate.sbatch"    # 4. once production has finished: CIFAR and UCI tables and figures
+cd "$AGT_REPO/scripts/poisoning_paper" && \
+  srun --nodes=1 --gpus=1 --time=00:30:00 python cifar_pca_plots.py   # 5. CIFAR summary figure
 ```
 
-`chain` passes its options to `sbatch` ahead of the script path, because `sbatch` treats every
-argument after the script path as a script argument.
+1. **[`smoke.sbatch`](smoke.sbatch)** (4 GPUs, 30 min). Pass: 4 GH200s listed, torch
+   `2.13.0+cu126`, the [`nccl_check.py`](nccl_check.py) all-reduce prints OK, and pytest reports
+   `1243 passed, 1 failed, 24 skipped`. The one failure, `test_bounded_sgd[ce-10-1-1.0-0.0-0.0]`, is
+   expected: a float32 rounding difference between the Grace-CPU BLAS and x86. Investigate any other
+   failure.
+2. **[`prepare.sbatch`](prepare.sbatch)** (4 GPUs, up to 6 h). It builds the files that parallel jobs
+   would otherwise race to write: the CIFAR and OCT-MNIST PCA bases, the UCI initial model, and the
+   CIFAR hyperparameter selection at d = 20, 22 and 24 (a 324-point grid per width, sharded over the
+   4 GPUs). Check that `$AGT_ROOT/.results/cifar_pca_selected_*_d{20,22,24}.json` exist.
+3. **[`production.sh`](production.sh)** writes the CIFAR run lists (from
+   `cifar_pca_manifest.py --missing`, frozen at submit time) and submits:
 
-A 4-GPU job cannot start while any of your 1-GPU jobs holds a GPU. The chain makes that ordering
-explicit instead of leaving it to the scheduler.
+   | Job | GPUs x `--time` | Runs | Measured |
+   |---|---|---|---|
+   | [`cifar_cheap.sbatch`](cifar_cheap.sbatch) | 1 x 2 h | every CIFAR run under 2^16 leaves, in sequence | |
+   | [`cifar_sharded.sbatch`](cifar_sharded.sbatch) arrays | 4 x 45 min / 3 h / 12 h (d = 20 / 22 / 24) | one CIFAR run of at least 2^16 leaves per task | 15 min / 65 min / 4.5 h |
+   | [`octmnist_threat.sbatch`](octmnist_threat.sbatch) | 4 x 3 h | OCT-MNIST threat grid | |
+   | [`octmnist_single.sbatch`](octmnist_single.sbatch) | 1 x 8 h | OCT-MNIST width, radius and depth sweeps, then the summary figure | |
+   | [`uci_single.sbatch`](uci_single.sbatch) | 1 x 30 min | UCI unrefined and `n_splits`=2 | 3 min |
+   | [`uci_sharded.sbatch`](uci_sharded.sbatch) `3` / `4` | 4 x 6 h / 20 h | UCI `n_splits` = 3, 4 | 46 min / 17.6 h |
+   | [`halfmoons.sbatch`](halfmoons.sbatch) | 1 x 2 h | half-moons sweep | |
+   | [`pt_control_cheap.sbatch`](pt_control_cheap.sbatch) | 1 x 30 min | CIFAR control at d = 22, 24: unrefined, top 12, eps/2 | |
+   | [`pt_control_sharded.sbatch`](pt_control_sharded.sbatch) `22` / `24` | 4 x 3 h / 12 h | CIFAR control, all d bisected | 65 min / 4.5 h |
 
-### 4.6 Float64 reruns and failures: `reruns.sh` [login]
+   The OCT-MNIST and half-moons sweeps train and plot in the same job. `production.sh` is safe to
+   re-run. The CIFAR lists then contain only runs that failed or timed out, plus a `--float64` rerun
+   for any run with a bound violation above 1e-3; every other job reads its finished runs from the
+   cache. The `--time` values came from [`benchmark.sbatch`](benchmark.sbatch) (job 6560456), which
+   only needs re-running on different hardware.
+4. **[`aggregate.sbatch`](aggregate.sbatch)** (1 GPU, 2 h) runs the CIFAR threat, depth and width
+   scripts and `uci_refinement_sweep.py --rungs 2 3 4`. They read cached runs only, and exit listing
+   any that are missing.
+5. **`cifar_pca_plots.py`** is in no job; it reads the same cache.
 
-Run it when the production chain has finished; check with `sacct`, not a polling loop.
-`cifar_pca_manifest.py --missing` then lists:
-- runs that failed or timed out (they have no cache entry);
-- `--float64` reruns for float32 runs whose violation exceeded 1e-3 (the design §3 precision policy).
+Check job outcomes with `sacct -X -S <date> --format=JobID%20,JobName%22,State,Elapsed,Timelimit,ExitCode`.
+If NCCL hangs, add `export NCCL_DEBUG=INFO` to the job and rerun `nccl_check.py`.
 
-`reruns.sh` is `production.sh` restricted to the CIFAR manifests: the same manifest generation and
-splitting (the `( |$)` patterns already match lines ending in `--float64`), `cifar_cheap.sbatch`
-for the 1-GPU list, and the chained `cifar_sharded.sbatch` arrays. Allow about 2x time for float64
-arrays. Repeat until both `--missing` manifests are empty.
+### 3.4 Outputs and bringing them back
 
-The OCT-MNIST and UCI jobs are simply resubmitted if they failed: finished cells are cached and
-skipped. OCT-MNIST violations are printed as warnings in the sweep log. UCI violations are in the
-records written by A4. An unsound cell there is reported as unsound rather than rerun, unless you
-decide otherwise.
-
-### 4.7 `aggregate.sbatch` (1 GPU, 2 h)
+Everything lives under `$AGT_ROOT` ([`env.sh`](env.sh)):
+- `.results/`: cached run records (`*.json`, `*.violation`) and parameter boxes;
+- `.models/`: pre-trained models;
+- `.data/`: datasets and PCA bases;
+- `.figures/`: every figure;
+- `logs/`: job logs, holding the per-experiment tables;
+- `manifests/`: the frozen CIFAR run lists.
 
 ```bash
-#SBATCH --job-name=agt-aggregate
-#SBATCH --gpus=1
-#SBATCH --time=02:00:00
-# (common header)
-failed=0
-for cmd in "cifar_pca_threat_sweep.py" "cifar_pca_leaf_sweep.py" "cifar_pca_dims_sweep.py" "uci_refinement_sweep.py --rungs 2 3"; do
-    echo "== $cmd"
-    python $cmd || { echo "FAILED: $cmd"; failed=1; }
-done
-exit "$failed"
-```
-
-- Add `4` to `--rungs` if (4,11) ran.
-- The CIFAR aggregation scripts read cached runs only (`collect` exits listing whatever is missing),
-  so a failure here names the runs to resubmit via §4.6.
-- This runs as a job rather than on a login node because it loads and projects all of CIFAR-10,
-  which needs more than 4 GiB.
-
-### 4.8 Bring results back [local]
-
-```bash
-DEST=scripts/poisoning_paper/.isambard
-mkdir -p "$DEST"
+DEST=scripts/poisoning_paper/.isambard     # [local]; gitignored
 rsync -av "<user>@<isambard-login>:<AGT_ROOT>/.figures/" "$DEST/figures/"
 rsync -av "<user>@<isambard-login>:<AGT_ROOT>/logs/" "$DEST/logs/"
 rsync -av --include='*/' --include='*.json' --include='*.violation' --exclude='*' \
     "<user>@<isambard-login>:<AGT_ROOT>/.results/" "$DEST/results/"
 ```
 
-`<AGT_ROOT>` is the expanded path; `echo $AGT_ROOT` on Isambard shows it. Use the login host you
-normally SSH to.
-
 ---
 
-## 5. Monitoring and recovery
+## 4. Open items
 
-- **Status**, run by hand, not in a loop:
-  - `squeue --me`
-  - `sacct -X -S today --format=JobID%20,JobName%22,State,Elapsed,Timelimit,ExitCode`
-  - Pending jobs show a reason: `Dependency` is the chain; a GRES/QOS limit reason is the 4-GPU cap.
-- **Timeouts.** Resubmit through `--missing` (§4.6). Finished runs are cached. After A3, a run killed
-  mid-write retrains instead of poisoning its cache entry.
-- **NCCL hangs or errors.** Add `export NCCL_DEBUG=INFO` to the job and rerun the smoke test's
-  `nccl_check.py` on the same node type.
-- **OOM.** Not expected on 96 GB: the largest local peaks were about 27 GB (UCI, `LEAF_CHUNK=192`) and
-  11 GiB (CIFAR). `LEAF_CHUNK` is part of the cache key, so changing it invalidates that pipeline's
-  finished runs.
-- **Code changes mid-campaign.** Any change to a config default, `LEAF_CHUNK`, the split tag or the
-  selection changes cache keys, so later runs will not match earlier ones. Do not pull such changes
-  until a pipeline's runs are complete.
-
----
-
-## 6. Budget (estimates until the benchmark replaces them)
-
-GH200 is assumed ~2x a 5090 (design §4).
-
-| Job | GPUs x wall (est.) | GPU-hours (est.) |
-|---|---|---|
-| smoke + prepare (E0 x3) + benchmark | 4 x ~4 h | ~16 |
-| CIFAR cheap | 1 x ~2 h | ~2 |
-| CIFAR 2^16-2^20 (28 runs: 25 E1 bisect-all, plus E2 2^16, 4^8, 4^10) | 4 x ~7 h | ~28 |
-| CIFAR d=22 bisect-all | 4 x ~1.2 h | ~5 |
-| CIFAR d=24 bisect-all | 4 x ~5 h | ~20 |
-| OCT-MNIST threat + single | 4 x ~1 h + 1 x ~3 h | ~7 |
-| UCI (2^11, 3^11) | benchmark decides | ? |
-| Half-moons | 1 x < 1 h | ~1 |
-| Float64 reruns, aggregation | benchmark and violations decide | ~5-15 |
-| **Total** | **~1-2 days of wall time at the 4-GPU cap, plus queueing** | **~85-95 plus UCI** |
-
----
-
-## 7. Open items
-
-1. `refine` has diverged from `origin/refine` (A1): rebase or force-push?
-2. UCI (4,11): in or out, decided from the benchmark (§4.4).
-3. CIFAR d=24: whether it fits in 24 h, decided from the benchmark. If not, checkpoint/resume or drop it.
-4. UCI is Python-loop-bound: if the Grace CPU is the bottleneck, sharding buys little (§4.4).
-5. Refactor flags, not part of this work:
-   - `init_distributed`, `rank` and `world_size` now have three copies (CIFAR, OCT, UCI);
-   - `count_violations` is imported from `octmnist_pca` by the other pipelines.
-
-   Both belong in `script_utils`.
-6. Scope: this covers the refinement experiments. The original paper scripts (`train_uci.py` plots and
-   attacks, `halfmoons.py`, the OCT-MNIST pixel-space sweeps) are not scheduled.
+- Refactor, not part of this work: `init_distributed`, `rank` and `world_size` have three copies
+  (CIFAR, OCT-MNIST, UCI), and CIFAR and UCI import `count_violations` from `octmnist_pca`. Both belong
+  in `script_utils`.
+- The pre-training-radius control has no aggregation script; its numbers above were read from the job
+  logs.

@@ -45,3 +45,6 @@ scripts/privacy_paper_old/script_utils.py
 
 scripts/old_experiments
 scripts/*.md
+
+!scripts/isambard
+scripts/poisoning_paper/.isambard*

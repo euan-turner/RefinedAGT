@@ -326,3 +326,147 @@ def test_t7_end_to_end_no_wider():
     for l, u in zip(refined.param_l, refined.param_u):
         assert (u >= l).all()
     assert _box_width(refined) <= _box_width(baseline) + ATOL
+
+
+# ======================================================================================
+# T8 -- index-addressable leaves: leaf_boxes builds exactly the leaves iter_leaf_boxes yields.
+# ======================================================================================
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("shape", [(5, 6), (3, 2, 2, 2)])
+@pytest.mark.parametrize("n_splits, dims", [(2, [0, 1, 2]), (3, [4, 1]), (4, [5]), (2, [1, 7, 99]), (2, [99])])
+def test_t8_leaf_boxes_match_enumeration(dtype, shape, n_splits, dims):
+    torch.manual_seed(0)
+    batch = torch.rand(shape, dtype=dtype)
+    eps = 0.3
+    reference = list(input_refinement.iter_leaf_boxes(batch, eps, dims, n_splits))
+    n_leaves = n_splits ** len(input_refinement.cut_dims_of(batch, dims, n_splits))
+    assert len(reference) == n_leaves
+
+    # every leaf, and an arbitrary out-of-order subset
+    for leaf_ids in (torch.arange(n_leaves), torch.randperm(n_leaves)[: max(1, n_leaves // 2)]):
+        x_l, x_u = input_refinement.leaf_boxes(batch, eps, dims, n_splits, leaf_ids)
+        assert x_l.shape == (len(leaf_ids) * shape[0], *shape[1:])
+        for position, leaf_id in enumerate(leaf_ids.tolist()):
+            rows = slice(position * shape[0], (position + 1) * shape[0])
+            assert torch.equal(x_l[rows], reference[leaf_id][0])
+            assert torch.equal(x_u[rows], reference[leaf_id][1])
+
+
+@pytest.mark.parametrize("n_leaves", [1, 4, 27, 1024])
+@pytest.mark.parametrize("world_size", [1, 2, 3, 5, 8])
+def test_t8_leaf_blocks_partition_the_leaves(n_leaves, world_size):
+    blocks = [input_refinement.leaf_block(n_leaves, rank, world_size) for rank in range(world_size)]
+    assert [i for start, stop in blocks for i in range(start, stop)] == list(range(n_leaves))
+    sizes = [stop - start for start, stop in blocks]
+    assert max(sizes) - min(sizes) <= 1
+
+
+# ======================================================================================
+# T9/T10 -- sharding: splitting the leaves across ranks (gloo, CPU) changes nothing.
+# Workers are module-level so torch.multiprocessing.spawn can import them.
+# ======================================================================================
+
+
+def _init_process_group(rank: int, world_size: int, init_file: str) -> None:
+    torch.distributed.init_process_group("gloo", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
+
+
+def _t9_problem(n_splits: int, dims: list[int]):
+    torch.manual_seed(0)
+    bounded_model = _bounded(_model(4, 10, 3, depth=2), param_radius=0.02)
+    x = torch.randn(5, 4, dtype=torch.float64)
+    y = torch.randint(0, 3, (5,))
+    kwargs = dict(epsilon=0.1, dims=dims, n_splits=n_splits)
+    return bounded_model, x, y, BoundedCrossEntropyLoss(reduction="none"), kwargs
+
+
+def _t9_worker(rank: int, world_size: int, init_file: str, out_dir: str, n_splits: int, dims: list[int]) -> None:
+    _init_process_group(rank, world_size, init_file)
+    try:
+        bounded_model, x, y, loss, kwargs = _t9_problem(n_splits, dims)
+        grads = input_refinement.refined_bound_backward_combined(
+            bounded_model, x, y, loss, leaf_chunk=2, shard=True, **kwargs
+        )
+        torch.save(grads, f"{out_dir}/rank{rank}.pt")
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+# world size 5 against 4 leaves leaves one rank empty; 27 leaves over 4 ranks gives uneven blocks
+@pytest.mark.parametrize("n_splits, dims, world_size", [(2, [0, 1], 2), (2, [0, 1], 3), (2, [0, 1], 5), (3, [0, 2, 3], 4)])
+def test_t9_sharded_refinement_matches_single_process(tmp_path, n_splits, dims, world_size):
+    bounded_model, x, y, loss, kwargs = _t9_problem(n_splits, dims)
+    ref_l, ref_u = input_refinement.refined_bound_backward_combined(bounded_model, x, y, loss, leaf_chunk=1, **kwargs)
+
+    torch.multiprocessing.spawn(
+        _t9_worker, args=(world_size, str(tmp_path / "pg"), str(tmp_path), n_splits, dims), nprocs=world_size
+    )
+    for rank in range(world_size):
+        grads_l, grads_u = torch.load(tmp_path / f"rank{rank}.pt")
+        for a, b in zip(ref_l + ref_u, grads_l + grads_u):
+            assert torch.equal(a, b)
+
+
+_T10_COMMON = dict(n_epochs=2, learning_rate=0.02, loss="cross_entropy", k_poison=5, epsilon=0.05, clip_gamma=1.0)
+
+
+def _t10_train(shard_leaves: bool, data_seed: int = 0) -> IntervalBoundedModel:
+    refinement = agt.InputRefinementConfig(n_splits=2, n_dims=4, shard_leaves=shard_leaves)
+    return agt.poison_certified_training(
+        _bounded(_model(6, 12, 2, seed=1, depth=2)),
+        agt.AGTConfig(**_T10_COMMON, input_refinement=refinement),
+        _halfmoons_loader(seed=data_seed),
+    )
+
+
+def _t10_worker(rank: int, world_size: int, init_file: str, out_dir: str, rank_dependent_data: bool) -> None:
+    _init_process_group(rank, world_size, init_file)
+    try:
+        trained = _t10_train(shard_leaves=True, data_seed=rank if rank_dependent_data else 0)
+        torch.save((trained.param_l, trained.param_n, trained.param_u), f"{out_dir}/rank{rank}.pt")
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+# rank_dependent_data gives ranks > 0 different data: rank 0 is authoritative, so the result must not move
+@pytest.mark.parametrize("rank_dependent_data", [False, True])
+def test_t10_sharded_training_matches_single_process(tmp_path, rank_dependent_data):
+    reference = _t10_train(shard_leaves=False)
+    world_size = 2
+    torch.multiprocessing.spawn(
+        _t10_worker, args=(world_size, str(tmp_path / "pg"), str(tmp_path), rank_dependent_data), nprocs=world_size
+    )
+    for rank in range(world_size):
+        params = torch.load(tmp_path / f"rank{rank}.pt")
+        for expected, actual in zip((reference.param_l, reference.param_n, reference.param_u), params):
+            for a, b in zip(expected, actual):
+                assert torch.equal(a, b)
+
+
+# ======================================================================================
+# T11 -- shard_leaves configuration.
+# ======================================================================================
+
+
+def test_t11_shard_leaves_requires_process_group():
+    assert not torch.distributed.is_initialized()
+    bounded_model = _bounded(_model(6, 8, 2), param_radius=0.0)
+    config = agt.AGTConfig(
+        n_epochs=1, learning_rate=0.01, loss="cross_entropy", k_poison=5, epsilon=0.1,
+        input_refinement=agt.InputRefinementConfig(n_splits=2, n_dims=2, shard_leaves=True),
+    )
+    with pytest.raises(ValueError, match="process group"):
+        input_refinement.validate_input_refinement(bounded_model, config)
+
+
+def test_t11_shard_leaves_does_not_change_hash():
+    configs = [
+        agt.AGTConfig(
+            n_epochs=1, learning_rate=0.01, loss="cross_entropy", k_poison=5, epsilon=0.1,
+            input_refinement=agt.InputRefinementConfig(n_splits=2, n_dims=2, shard_leaves=shard),
+        )
+        for shard in (False, True)
+    ]
+    assert configs[0].hash() == configs[1].hash()

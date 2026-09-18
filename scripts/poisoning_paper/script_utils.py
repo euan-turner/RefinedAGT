@@ -106,11 +106,23 @@ def apply_figure_size(fig, size, dpi=300, eps=1e-2, give_up=2, min_size_px=10):
 
 
 def make_dirs():
-    """Make the required directories"""
-    dirname = os.path.dirname(__file__)
+    """Make the required directories, under ``$AGT_ROOT`` when set (e.g. Isambard project storage),
+    else next to this file."""
+    dirname = os.environ.get("AGT_ROOT", os.path.dirname(__file__))
     dirs = [".results", ".models", ".data", ".figures"]
     dirs = [os.path.join(dirname, d) for d in dirs]
     for d in dirs:
         if not os.path.exists(d):
             os.makedirs(d)
     return dirs
+
+
+def atomic_write(path, write):
+    """Write ``path`` so that no reader ever observes a partial file: ``write(tmp_path)`` writes to a
+    sibling temporary path, then ``os.replace`` renames it onto ``path`` atomically. ``tmp_path`` keeps
+    ``path``'s suffix (``x.npz`` becomes ``x.tmp<pid>.npz``), since ``np.savez`` appends ``.npz`` to any
+    path that does not already end in it."""
+    root, ext = os.path.splitext(path)
+    tmp_path = f"{root}.tmp{os.getpid()}{ext}"
+    write(tmp_path)
+    os.replace(tmp_path, path)
