@@ -13,6 +13,10 @@ The experiments (each analysis script states its hypotheses):
       eps=0.05), unrefined and at every partition in E2_SCHEDULE.
     - Feature width (``e3_runs``, analysed by cifar_pca_dims_sweep.py). The refinement-depth attack
       at each d in E3_DIMS: unrefined, top 12 bisected, all d bisected, and the eps/2 reference.
+    - Refinement ladder (``e4_runs``, analysed by ``cifar_pca_leaf_sweep.py --cell e4``). The E2
+      question at the threat-grid cell where refinement moved certified accuracy most (d=20, k=200,
+      eps=0.02): unrefined, the bisection ladder, and quadrisection at equal cost to 2^16 and 2^20
+      (E4_SCHEDULE). Its 2^12 and 2^20 rungs are E1 runs.
 Runs that two experiments share are listed once (``all_runs``).
 
 As a command, it prints runs as cifar_pca_run.py argument lines, cheapest first, for the Slurm jobs:
@@ -47,6 +51,9 @@ E2_SCHEDULE = [(2, 4), (2, 8), (2, 12), (2, 16), (2, 20), (16, 3), (4, 8), (4, 1
 
 E3_DIMS = [20, 22, 24]
 
+E4_D, E4_K, E4_EPS = 20, 200, 0.02
+E4_SCHEDULE = [(2, 4), (2, 8), (2, 12), (2, 16), (2, 20), (4, 8), (4, 10)]
+
 SHARDED_FROM_LEAVES = 2**16  # runs with at least this many leaves take a 4-GPU node
 
 
@@ -71,13 +78,18 @@ def e3_runs():
                                              Run(d, E2_K, E2_EPS, (2, d)), Run(d, E2_K, E2_EPS / 2, None))]
 
 
+def e4_runs():
+    """Refinement ladder at the E1 cell with the largest certified-accuracy gain: baseline and every rung."""
+    return [Run(E4_D, E4_K, E4_EPS, None)] + [Run(E4_D, E4_K, E4_EPS, rung) for rung in E4_SCHEDULE]
+
+
 def leaves(run):
     return 1 if run.refine is None else run.refine[0] ** run.refine[1]
 
 
 def all_runs():
-    """Every run of E1-E3 once, cheapest first."""
-    return sorted(dict.fromkeys(e1_runs() + e2_runs() + e3_runs()), key=lambda run: (leaves(run), run.d))
+    """Every run of E1-E4 once, cheapest first."""
+    return sorted(dict.fromkeys(e1_runs() + e2_runs() + e3_runs() + e4_runs()), key=lambda run: (leaves(run), run.d))
 
 
 def collect(runs):

@@ -23,12 +23,17 @@ Output:
     - a figure of box width, certified cross-entropy and certified accuracy against leaf count, with
       the ladder drawn as a line and the alternatives as labelled points.
 
+``--cell e4`` runs the same analysis on the refinement ladder at k=200, eps=0.02 (the E1 cell with the
+largest certified-accuracy gain; see cifar_pca_manifest), whose equal-cost alternatives are the
+quadrisections 4^8 and 4^10. Its results file and figure are suffixed ``_e4``.
+
 Reads cached runs only, and exits listing any that are missing.
 
 Key external dependencies: matplotlib, and the sibling modules cifar_pca, cifar_pca_manifest and
 script_utils.
 """
 
+import argparse
 import json
 import sys
 
@@ -36,19 +41,30 @@ import matplotlib.pyplot as plt
 
 import cifar_pca
 import script_utils
-from cifar_pca_manifest import E2_D, E2_EPS, E2_K, E2_SCHEDULE, Run, collect, e2_runs
+import cifar_pca_manifest as manifest
+from cifar_pca_manifest import Run, collect
 
-results = collect(e2_runs())
-base = results[Run(E2_D, E2_K, E2_EPS, None)]
+parser = argparse.ArgumentParser()
+parser.add_argument("--cell", choices=("e2", "e4"), default="e2")
+args = parser.parse_args()
+CELL, SCHEDULE, RUNS = {
+    "e2": ((manifest.E2_D, manifest.E2_K, manifest.E2_EPS), manifest.E2_SCHEDULE, manifest.e2_runs()),
+    "e4": ((manifest.E4_D, manifest.E4_K, manifest.E4_EPS), manifest.E4_SCHEDULE, manifest.e4_runs()),
+}[args.cell]
+D, K, EPS = CELL
+SUFFIX = "" if args.cell == "e2" else f"_{args.cell}"
+
+results = collect(RUNS)
+base = results[Run(D, K, EPS, None)]
 rows = []
-for n_splits, n_dims in sorted(E2_SCHEDULE, key=lambda r: r[0] ** r[1]):
-    result = results[Run(E2_D, E2_K, E2_EPS, (n_splits, n_dims))]
+for n_splits, n_dims in sorted(SCHEDULE, key=lambda r: r[0] ** r[1]):
+    result = results[Run(D, K, EPS, (n_splits, n_dims))]
     assert abs(result["test"]["nominal_acc"] - base["test"]["nominal_acc"]) < 1e-9, "refinement moved the nominal model"
     rows.append({"n_splits": n_splits, "n_dims": n_dims, "leaves": n_splits**n_dims, **result})
 
 # %%
 b = base["test"]
-print(f"\nE2 | CIFAR-10 PCA d={E2_D} k={E2_K} eps={E2_EPS} | nominal held-out test acc {b['nominal_acc']:.4f}, "
+print(f"\n{args.cell.upper()} | CIFAR-10 PCA d={D} k={K} eps={EPS} | nominal held-out test acc {b['nominal_acc']:.4f}, "
       f"CE {b['nominal_ce']:.4f} | test split", file=sys.stderr)
 print(f"  {'split':>6s} {'leaves':>9s}  {'box':>9s} {'width':>7s}  {'cert acc':>8s} {'gain':>7s}  "
       f"{'cert CE':>8s} {'gain':>7s}  {'clean':>6s}  {'time':>9s} {'ranks':>5s} {'viol':>7s}", file=sys.stderr)
@@ -63,7 +79,7 @@ for r in rows:
           f"{r['seconds']:8.0f}s {r['world_size']:>5d} {r['violation']:7.1e}", file=sys.stderr)
 
 results_dir, _, _, fig_dir = cifar_pca.dirs()
-with open(f"{results_dir}/cifar_pca_leaf_sweep.json", "w") as file:
+with open(f"{results_dir}/cifar_pca_leaf_sweep{SUFFIX}.json", "w") as file:
     json.dump({"baseline": base, "rungs": rows}, file, indent=1)
 
 # %%
@@ -82,8 +98,9 @@ for ax, key, ylabel in ((axs[0], "box_width", "certified box width"),
                    label="nominal")
     ax.plot([r["leaves"] for r in bisect], [r["test"][key] for r in bisect], marker="o", color=C["green"],
             label=r"bisect ($n_{splits}=2$)")
-    ax.scatter([r["leaves"] for r in equal_cost], [r["test"][key] for r in equal_cost], marker="^",
-               color=C["orange"], zorder=3, label="fewer, finer dims")
+    if equal_cost:
+        ax.scatter([r["leaves"] for r in equal_cost], [r["test"][key] for r in equal_cost], marker="^",
+                   color=C["orange"], zorder=3, label="fewer, finer dims")
     for r in equal_cost:
         ax.annotate(rf"${r['n_splits']}^{{{r['n_dims']}}}$", (r["leaves"], r["test"][key]),
                     textcoords="offset points", xytext=(-5, 4), ha="right", fontsize="xx-small", color=C["orange"])
@@ -92,9 +109,9 @@ for ax, key, ylabel in ((axs[0], "box_width", "certified box width"),
     ax.set_ylabel(ylabel)
     ax.legend(fontsize="xx-small")
 
-fig.suptitle(rf"CIFAR-10 on PCA features ($d={E2_D}$): refinement depth, $k={E2_K}$, $\epsilon={E2_EPS}$, "
+fig.suptitle(rf"CIFAR-10 on PCA features ($d={D}$): refinement depth, $k={K}$, $\epsilon={EPS}$, "
              "test split", fontsize="small")
 script_utils.apply_figure_size(fig, script_utils.set_size(1.0, subplots, shrink_height=2.4), dpi=300)
-path = f"{fig_dir}/cifar_pca_leaf_sweep.pdf"
+path = f"{fig_dir}/cifar_pca_leaf_sweep{SUFFIX}.pdf"
 plt.savefig(path, dpi=300)
 print(f"\n  figure: {path}", file=sys.stderr)

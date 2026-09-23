@@ -160,8 +160,10 @@ tightening the certificate, with diminishing returns. **Holds.**
 
 Binary classification on 2-D half-moons with quadratic and cubic features appended (6 inputs), a
 `6 -> 128 ReLU -> 2` model, k=200, eps=0.01. Every one of the 6 features is cut into `n_splits` pieces.
-Script: [`halfmoons_refinement_sweep.py`](../poisoning_paper/halfmoons_refinement_sweep.py). It has no
-cache; its job log and `halfmoons_refinement_sweep.pdf` are the result.
+Script: [`halfmoons_refinement_sweep.py`](../poisoning_paper/halfmoons_refinement_sweep.py). This
+campaign's version trained in the job and had no cache, so its job log and
+`halfmoons_refinement_sweep.pdf` are the result. The script now reads cached runs written by
+[`halfmoons_run.py`](../poisoning_paper/halfmoons_run.py) (section 5).
 
 **Hypothesis (inferred):** as UCI, finer cuts on every coordinate keep tightening the certificate,
 with diminishing returns. **Holds**, with by far the largest gains of any dataset.
@@ -267,11 +269,11 @@ cd "$AGT_REPO/scripts/poisoning_paper" && \
    | [`octmnist_single.sbatch`](octmnist_single.sbatch) | 1 x 8 h | OCT-MNIST width, radius and depth sweeps, then the summary figure | |
    | [`uci_single.sbatch`](uci_single.sbatch) | 1 x 30 min | UCI unrefined and `n_splits`=2 | 3 min |
    | [`uci_sharded.sbatch`](uci_sharded.sbatch) `3` / `4` | 4 x 6 h / 20 h | UCI `n_splits` = 3, 4 | 46 min / 17.6 h |
-   | [`halfmoons.sbatch`](halfmoons.sbatch) | 1 x 2 h | half-moons sweep | |
+   | [`halfmoons.sbatch`](halfmoons.sbatch) | 1 x 1 h | half-moons unrefined and 2^6..6^6 (cached; aggregated in section 5) | |
    | [`pt_control_cheap.sbatch`](pt_control_cheap.sbatch) | 1 x 30 min | CIFAR control at d = 22, 24: unrefined, top 12, eps/2 | |
    | [`pt_control_sharded.sbatch`](pt_control_sharded.sbatch) `22` / `24` | 4 x 3 h / 12 h | CIFAR control, all d bisected | 65 min / 4.5 h |
 
-   The OCT-MNIST and half-moons sweeps train and plot in the same job. `production.sh` is safe to
+   The OCT-MNIST sweeps train and plot in the same job. `production.sh` is safe to
    re-run. The CIFAR lists then contain only runs that failed or timed out, plus a `--float64` rerun
    for any run with a bound violation above 1e-3; every other job reads its finished runs from the
    cache. The `--time` values came from [`benchmark.sbatch`](benchmark.sbatch) (job 6560456), which
@@ -311,3 +313,52 @@ rsync -av --include='*/' --include='*.json' --include='*.violation' --exclude='*
   in `script_utils`.
 - The pre-training-radius control has no aggregation script; its numbers above were read from the job
   logs.
+
+---
+
+## 5. Refinement-ladder campaign
+
+Purpose: the paper figures of nominal, unrefined and refined certified accuracy against the partition
+of the eps-ball (`n_splits^n_dims`), marking the rungs that needed 4-GPU sharding. Section 2 left
+two gaps. On CIFAR-10 and OCT-MNIST the depth sweeps sit where refinement moves certified accuracy by
+only a few test points. On half-moons, certified accuracy was still rising at 6^6. Status: submitted
+scripts only; no results yet.
+
+| Dataset | Cell | Rungs (new in **bold**) | Run through |
+|---|---|---|---|
+| CIFAR-10, d=20 | k=200, eps=0.02 (E4) | **2^4**, **2^8**, 2^12, **2^16**, 2^20, **4^8**, **4^10** | `cifar_pca_run.py`, listed by `cifar_pca_manifest.py` |
+| OCT-MNIST, d=15 | eps=0.1, k in {200, 400} | **2^5**, **2^10**, 2^15, **3^10**, **3^12**, **4^10**, **3^15** | [`octmnist_pca_ladder_run.py`](../poisoning_paper/octmnist_pca_ladder_run.py), listed by [`octmnist_pca_ladder.py`](../poisoning_paper/octmnist_pca_ladder.py) |
+| Half-moons | k=200, eps=0.01 | 2^6..6^6 (rerun into the cache), **8^6**, **10^6**, **12^6**, **16^6** | [`halfmoons_run.py`](../poisoning_paper/halfmoons_run.py) |
+
+The CIFAR-10 and OCT-MNIST ladders reuse cached runs: the E1 runs, and the threat-grid baseline and
+2^15 runs. The OCT-MNIST ladder builds its configurations exactly as the threat grid does (tag,
+`leaf_chunk`, and `max_leaves` equal to the leaf count), because both of those fields are in the
+cache key. Rungs of at least 2^16 leaves run on 4 GPUs. Every run record stores `world_size`, and the
+aggregators print it in a `ranks` column.
+
+```bash
+cd "$AGT_ROOT/logs"
+bash "$AGT_REPO/scripts/isambard/ladders.sh"                # every ladder job at once (prints each job id)
+sbatch "$AGT_REPO/scripts/isambard/ladders_aggregate.sbatch"  # once they have all finished
+```
+
+| Job | GPUs x `--time` | Runs | Estimate |
+|---|---|---|---|
+| [`cifar_cheap.sbatch`](cifar_cheap.sbatch) | 1 x 2 h | CIFAR 2^4, 2^8 | seconds |
+| [`cifar_sharded.sbatch`](cifar_sharded.sbatch) array | 4 x 45 min | CIFAR 2^16, 4^8, 4^10 | 62 s / 61 s / 911 s (measured, E2) |
+| [`octmnist_ladder_cheap.sbatch`](octmnist_ladder_cheap.sbatch) | 1 x 1 h | OCT 2^5, 2^10, 3^10 at both k | ~15 min |
+| [`octmnist_ladder_sharded.sbatch`](octmnist_ladder_sharded.sbatch) array | 4 x 1.5 h | OCT 3^12, 4^10 at both k | 13 / 26 min each |
+| (same) array | 4 x 12 h | OCT 3^15 at both k | ~6 h each |
+| [`halfmoons.sbatch`](halfmoons.sbatch) | 1 x 1 h | half-moons unrefined, 2^6..6^6 | ~5 min |
+| [`halfmoons_sharded.sbatch`](halfmoons_sharded.sbatch) `8 10 12` | 4 x 4 h | half-moons 8^6, 10^6, 12^6 | ~1.2 h |
+| [`halfmoons_sharded.sbatch`](halfmoons_sharded.sbatch) `16` | 4 x 12 h | half-moons 16^6 (16.8M leaves) | ~5 h |
+| [`ladders_aggregate.sbatch`](ladders_aggregate.sbatch) | 1 x 1 h | tables and `cifar_pca_leaf_sweep_e4.json`, `octmnist_pca_ladder_sweep.json`, `halfmoons_refinement_sweep.json` | |
+
+The estimates are extrapolations and have not been measured on Isambard. The OCT-MNIST figures scale
+the threat grid's 2^15 run (49 s on 4 GPUs) by leaf count. The half-moons figures scale 3.9 ms per
+leaf, measured on one RTX 5090 in float64, over 4 GPUs. Check `sacct` elapsed times against them.
+
+Aggregate on Isambard, not locally. The pre-trained OCT-MNIST d=15 model retrained on x86 differs
+slightly (unrefined k=200 certified accuracy 0.528, against 0.524 on Isambard), so local runs would
+miss the cache and give different numbers. The rsync in section 3.4 also brings back the aggregators'
+`*.json` results files.
