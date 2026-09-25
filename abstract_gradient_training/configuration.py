@@ -45,6 +45,14 @@ class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
 
     n_splits: int = pydantic.Field(2, ge=2, description="Equal cuts per split dimension")
     n_dims: int = pydantic.Field(2, ge=1, description="Number of input coordinates to split")
+    secondary_n_splits: int = pydantic.Field(
+        2, ge=2, description="Equal cuts per secondary split dimension; unused when secondary_n_dims is 0"
+    )
+    secondary_n_dims: int = pydantic.Field(
+        0,
+        ge=0,
+        description="Number of further coordinates, ranked after the n_dims primary ones, cut into secondary_n_splits",
+    )
     strategy: Literal["sensitivity", "widest", "first"] = pydantic.Field(
         "sensitivity", description="How to choose the split coordinates; see input_refinement.select_split_dims"
     )
@@ -65,7 +73,21 @@ class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
     @property
     def n_leaves(self) -> int:
         """Leaf count from the requested split, before capping by the true input dimension."""
-        return self.n_splits**self.n_dims
+        return self.n_splits**self.n_dims * self.secondary_n_splits**self.secondary_n_dims
+
+    @property
+    def dim_splits(self) -> list[int]:
+        """Cuts for each selected coordinate, in selection order: n_splits for the first n_dims, then
+        secondary_n_splits for the next secondary_n_dims."""
+        return [self.n_splits] * self.n_dims + [self.secondary_n_splits] * self.secondary_n_dims
+
+    def __repr_args__(self):
+        # AGTConfig.hash() hashes this repr: leave the secondary tier out of it while it is unused, so
+        # configurations written before the tier existed keep their hashes (and their cached results)
+        for name, value in super().__repr_args__():
+            if self.secondary_n_dims == 0 and name in ("secondary_n_splits", "secondary_n_dims"):
+                continue
+            yield name, value
 
 class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True):
     """Configuration class for the abstract gradient training module."""

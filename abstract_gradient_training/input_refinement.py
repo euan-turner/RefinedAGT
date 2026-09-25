@@ -7,7 +7,8 @@ result is a sound, and never wider, replacement for the single-box bound. When `
 reduces to the default bounding method.
 
 The refinement is exponential in the number of split dimensions (``n_splits ** len(dims)`` bounding
-passes per fragment) and flat in the batch size. It calls only ``bound_backward_combined``, so it
+passes per fragment, or the product of the per-dimension cuts when the primary and secondary tiers of
+``InputRefinementConfig`` cut different counts) and flat in the batch size. It calls only ``bound_backward_combined``, so it
 composes with every ``BoundedModel`` bounding method; but is impractical when the per-leaf work
 is heavy, such as the MIP-bounded model. The leaves can be sharded across the ranks of a
 ``torch.distributed`` process group (``InputRefinementConfig.shard_leaves``).
@@ -17,7 +18,8 @@ from __future__ import annotations
 
 import itertools
 import logging
-from collections.abc import Iterator
+import math
+from collections.abc import Iterator, Sequence
 
 import torch
 import torch.distributed as dist
@@ -50,7 +52,9 @@ def select_split_dims(bounded_model: BoundedModel, epsilon: float, cfg: InputRef
     -- a fixed ``transform`` or a non-``Linear`` first layer -- rather than falling back silently.
 
     Returns:
-        list[int]: coordinate indices into the flattened input, at most ``cfg.n_dims`` of them.
+        list[int]: coordinate indices into the flattened input, at most ``cfg.n_dims +
+            cfg.secondary_n_dims`` of them. The first ``cfg.n_dims`` are the primary tier (cut into
+            ``cfg.n_splits``); ``split_counts`` pairs each with its cut count.
     """
     first = bounded_model.modules[0] if bounded_model.modules else None
 
@@ -70,28 +74,34 @@ def select_split_dims(bounded_model: BoundedModel, epsilon: float, cfg: InputRef
             )
         weight = first.weight.detach()
         scores = 2 * epsilon * weight.abs().sum(dim=0)
-        return torch.argsort(scores, descending=True)[: cfg.n_dims].tolist()
+        return torch.argsort(scores, descending=True)[: len(cfg.dim_splits)].tolist()
 
     # "widest" and "first": split the leading coordinates. iter_leaf_boxes clamps to the true
     # flattened input dimension, so requesting more than the model has is harmless.
-    return list(range(cfg.n_dims))
+    return list(range(len(cfg.dim_splits)))
+
+
+def split_counts(cfg: InputRefinementConfig, dims: list[int]) -> list[int]:
+    """The cut count for each coordinate ``select_split_dims`` returned, in the same order."""
+    return cfg.dim_splits[: len(dims)]
 
 
 def iter_leaf_boxes(
-    batch: torch.Tensor, epsilon: float, dims: list[int], n_splits: int
+    batch: torch.Tensor, epsilon: float, dims: list[int], n_splits: int | Sequence[int]
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """
     Yield the ``(lower, upper)`` corners of each leaf of the partitioned l_inf ball, one leaf at a
     time.
 
     Each coordinate in ``dims`` (an index into the flattened input) is cut into ``n_splits`` equal
-    intervals; every other coordinate keeps its full ``[x - epsilon, x + epsilon]`` range. There are
-    ``n_splits ** len(dims)`` leaves, a single grid shared by every sample in ``batch``. 
-    Leaves are built lazily from ``batch`` rather than materialised together, 
+    intervals -- one count for every coordinate, or one per coordinate of ``dims`` -- and every other
+    coordinate keeps its full ``[x - epsilon, x + epsilon]`` range. There are as many leaves as the
+    product of the cuts, a single grid shared by every sample in ``batch``.
+    Leaves are built lazily from ``batch`` rather than materialised together,
     so peak memory is one leaf's worth of corners regardless of the count.
 
-    When ``n_splits <= 1`` or no coordinate is cut, yields a single leaf equal to
-    ``(batch - epsilon, batch + epsilon)``.
+    When no coordinate is cut (every count ``<= 1``, or ``dims`` selects nothing), yields a single leaf
+    equal to ``(batch - epsilon, batch + epsilon)``.
 
     Yields:
         tuple[torch.Tensor, torch.Tensor]: ``(x_l, x_u)`` shaped like ``batch``, the corners of one
@@ -99,48 +109,69 @@ def iter_leaf_boxes(
     """
     lower = batch - epsilon
     upper = batch + epsilon
+    cut_dims, cut_splits = cut_grid(batch, dims, n_splits)
 
-    if batch.dim() < 2:
+    if not cut_dims:
         yield lower, upper
         return
 
     lower_flat = lower.flatten(1)
     upper_flat = upper.flatten(1)
-    cut_dims = [d for d in dims if d < lower_flat.size(1)]
-
-    if n_splits <= 1 or not cut_dims:
-        yield lower, upper
-        return
-
-    width = 2.0 * epsilon / n_splits
-    for offsets in itertools.product(range(n_splits), repeat=len(cut_dims)):
+    widths = [2.0 * epsilon / s for s in cut_splits]
+    for offsets in itertools.product(*(range(s) for s in cut_splits)):
         leaf_l = lower_flat.clone()
         leaf_u = upper_flat.clone()
-        for d, offset in zip(cut_dims, offsets):
+        for d, offset, width in zip(cut_dims, offsets, widths):
             leaf_l[:, d] = lower_flat[:, d] + offset * width
             leaf_u[:, d] = lower_flat[:, d] + (offset + 1) * width
         yield leaf_l.view_as(batch), leaf_u.view_as(batch)
 
 
-def cut_dims_of(batch: torch.Tensor, dims: list[int], n_splits: int) -> list[int]:
-    """The coordinates of ``dims`` that are actually cut: none when ``n_splits <= 1`` or ``batch`` has
-    no feature axis, and only those inside the flattened input otherwise."""
-    if n_splits <= 1 or batch.dim() < 2:
-        return []
-    return [d for d in dims if d < batch[0].numel()]
+def cut_grid(
+    batch: torch.Tensor, dims: list[int], n_splits: int | Sequence[int]
+) -> tuple[list[int], list[int]]:
+    """
+    The coordinates of ``dims`` that are actually cut, and the number of cuts along each.
+
+    ``n_splits`` is one count for every coordinate of ``dims`` or a sequence with one count per
+    coordinate. A coordinate is cut when its count is above 1 and it lies inside the flattened input;
+    nothing is cut when ``batch`` has no feature axis.
+    """
+    splits = [n_splits] * len(dims) if isinstance(n_splits, int) else list(n_splits)
+    if len(splits) != len(dims):
+        raise ValueError(f"got {len(splits)} split counts for {len(dims)} split dimensions")
+    if batch.dim() < 2:
+        return [], []
+    pairs = [(d, s) for d, s in zip(dims, splits) if s > 1 and d < batch[0].numel()]
+    return [d for d, _ in pairs], [s for _, s in pairs]
+
+
+def cut_dims_of(batch: torch.Tensor, dims: list[int], n_splits: int | Sequence[int]) -> list[int]:
+    """The coordinates of ``dims`` that are actually cut; see ``cut_grid``."""
+    return cut_grid(batch, dims, n_splits)[0]
+
+
+def count_leaves(batch: torch.Tensor, dims: list[int], n_splits: int | Sequence[int]) -> int:
+    """Number of leaves in the partition ``iter_leaf_boxes`` enumerates."""
+    return math.prod(cut_grid(batch, dims, n_splits)[1])
 
 
 def leaf_boxes(
-    batch: torch.Tensor, epsilon: float, dims: list[int], n_splits: int, leaf_ids: torch.Tensor
+    batch: torch.Tensor,
+    epsilon: float,
+    dims: list[int],
+    n_splits: int | Sequence[int],
+    leaf_ids: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Corners of the leaves ``leaf_ids`` of the partitioned l_inf ball, for the whole batch, stacked
     leaf-major.
 
-    Leaf ``i`` is the ``i``-th leaf ``iter_leaf_boxes`` yields, with identical corners: its offset
-    along the ``p``-th coordinate of ``cut_dims_of(batch, dims, n_splits)`` is the ``p``-th most
-    significant base-``n_splits`` digit of ``i``. Unlike ``iter_leaf_boxes`` any subset of leaves can
-    be built directly, which is what lets ranks take disjoint blocks of the partition.
+    Leaf ``i`` is the ``i``-th leaf ``iter_leaf_boxes`` yields, with identical corners: its offsets
+    along the coordinates of ``cut_grid(batch, dims, n_splits)`` are the digits of ``i`` in the
+    mixed radix given by their cut counts, most significant first. Unlike ``iter_leaf_boxes`` any
+    subset of leaves can be built directly, which is what lets ranks take disjoint blocks of the
+    partition.
 
     Returns:
         tuple[torch.Tensor, torch.Tensor]: ``(x_l, x_u)`` of shape ``[len(leaf_ids) * B, ...]``, the
@@ -149,17 +180,18 @@ def leaf_boxes(
     batchsize = batch.size(0)
     lower = (batch - epsilon).reshape(batchsize, -1).repeat(len(leaf_ids), 1)
     upper = (batch + epsilon).reshape(batchsize, -1).repeat(len(leaf_ids), 1)
-    cut_dims = cut_dims_of(batch, dims, n_splits)
+    cut_dims, cut_splits = cut_grid(batch, dims, n_splits)
 
     if cut_dims:
-        places = n_splits ** torch.arange(len(cut_dims) - 1, -1, -1, device=batch.device)
-        offsets = (leaf_ids.to(batch.device)[:, None] // places) % n_splits
+        radix = torch.tensor(cut_splits, device=batch.device)
+        places = torch.tensor([math.prod(cut_splits[p + 1 :]) for p in range(len(cut_splits))], device=batch.device)
+        offsets = (leaf_ids.to(batch.device)[:, None] // places) % radix
         offsets = offsets.repeat_interleave(batchsize, dim=0).double()
         # scale in float64 then cast, so the corners round exactly as iter_leaf_boxes' scalar arithmetic does
-        width = 2.0 * epsilon / n_splits
+        widths = torch.tensor([2.0 * epsilon / s for s in cut_splits], dtype=torch.float64, device=batch.device)
         base = lower[:, cut_dims]
-        lower[:, cut_dims] = base + (offsets * width).to(batch.dtype)
-        upper[:, cut_dims] = base + ((offsets + 1) * width).to(batch.dtype)
+        lower[:, cut_dims] = base + (offsets * widths).to(batch.dtype)
+        upper[:, cut_dims] = base + ((offsets + 1) * widths).to(batch.dtype)
 
     shape = (len(leaf_ids) * batchsize, *batch.shape[1:])
     return lower.view(shape), upper.view(shape)
@@ -218,7 +250,7 @@ def refined_bound_backward_combined(
     *,
     epsilon: float,
     dims: list[int],
-    n_splits: int,
+    n_splits: int | Sequence[int],
     leaf_chunk: int,
     label_k_poison: int = 0,
     label_epsilon: float = 0.0,
@@ -231,8 +263,9 @@ def refined_bound_backward_combined(
 
     Drop-in tightening of ``bounded_model.bound_backward_combined(batch - epsilon, batch + epsilon, labels, loss, ...)``:
     the return shape is identical (per-sample bounds in flat parameter order) and the
-    bounds are never wider. Reduces to exactly that call when ``n_splits <= 1`` or ``dims`` selects
-    no coordinate, so a disabled refinement is bit-identical to the shipped path.
+    bounds are never wider. ``n_splits`` is one cut count for every coordinate of ``dims`` or one per
+    coordinate (see ``cut_grid``). Reduces to exactly that call when no coordinate is cut, so a
+    disabled refinement is bit-identical to the shipped path.
 
     Leaves are propagated in groups of ``leaf_chunk``, stacked into the batch dimension so each
     group is one batched bounding call, then hulled at the per-sample gradient. Chunking does not
@@ -245,7 +278,7 @@ def refined_bound_backward_combined(
     """
     batchsize = batch.size(0)
     chunk_size = max(1, leaf_chunk)
-    n_leaves = n_splits ** len(cut_dims_of(batch, dims, n_splits))
+    n_leaves = count_leaves(batch, dims, n_splits)
     start, stop = 0, n_leaves
     if shard:
         start, stop = leaf_block(n_leaves, dist.get_rank(), dist.get_world_size())
@@ -366,11 +399,11 @@ def validate_input_refinement(bounded_model: BoundedModel, config: AGTConfig) ->
         )
 
     dims = select_split_dims(bounded_model, config.epsilon, cfg)
-    n_leaves = config.input_refinement.n_splits ** len(dims)
+    n_leaves = math.prod(split_counts(cfg, dims))
     if n_leaves > cfg.max_leaves:
         raise ValueError(
             f"input_refinement would propagate {n_leaves} leaves per fragment "
-            f"(n_splits={cfg.n_splits} raised to {len(dims)} split dimensions), above "
+            f"(cuts {split_counts(cfg, dims)} over split dimensions {dims}), above "
             f"max_leaves={cfg.max_leaves}. Lower n_splits or n_dims, or raise max_leaves."
         )
     return dims

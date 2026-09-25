@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import logging
 import gc
+import math
 
 import torch
 
@@ -52,7 +53,7 @@ def poison_certified_training(
         entry_dims = input_refinement.validate_input_refinement(bounded_model, config)
         LOGGER.info(
             "Input-ball refinement active: %s leaves/sample over split dims %s",
-            config.input_refinement.n_splits ** len(entry_dims),
+            math.prod(input_refinement.split_counts(config.input_refinement, entry_dims)),
             entry_dims,
         )
 

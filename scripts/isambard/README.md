@@ -2,7 +2,7 @@
 
 Purpose: the hypotheses tested by the poisoning-paper refinement experiments, the result for each one
 as run on Isambard-AI in September 2026, and how to rerun them. The experiments cover CIFAR-10 on PCA
-features, OCT-MNIST on PCA features, UCI house-electric and half-moons.
+features, OCT-MNIST on PCA features, UCI house-electric, half-moons and MAGIC gamma telescope.
 
 Key external dependencies: Slurm, uv, torch 2.13.0 (`+cu126` on aarch64, from `uv.lock`), NCCL via
 `torchrun --standalone`.
@@ -362,3 +362,42 @@ Aggregate on Isambard, not locally. The pre-trained OCT-MNIST d=15 model retrain
 slightly (unrefined k=200 certified accuracy 0.528, against 0.524 on Isambard), so local runs would
 miss the cache and give different numbers. The rsync in section 3.4 also brings back the aggregators'
 `*.json` results files.
+
+---
+
+## 6. MAGIC gamma-telescope ladder
+
+Purpose: a fourth ladder panel, on a real tabular binary-classification task with few enough
+features (10) to cut every one of them. Status: submitted scripts only; no Isambard results yet.
+
+Task and threat model are in [`magic_refinement.py`](../poisoning_paper/magic_refinement.py): the
+half-moons threat model (k=200, eps=0.01, features only, on standardised inputs), a `10 -> 128 -> 2`
+float64 network trained by three full-batch steps. Locally (RTX 5090) the unrefined certificate is
+0.599 against nominal 0.789 and a majority-class floor of 0.648. More steps, or minibatches, leave no
+certificate at all.
+
+Ten features are too many to cut every one finely, so each rung is one or two tiers. `N^DxM^E`
+cuts the D most sensitive features into N and the next E into M
+(`InputRefinementConfig.secondary_n_splits` / `secondary_n_dims`). The ladder alternates between
+cutting the more sensitive half one step finer and catching the other half up:
+
+| Rung | 2^5 | 2^10 | 3^5x2^5 | 3^10 | 4^5x3^5 | 4^10 | 5^5x4^5 | 5^10 | 6^5x5^5 |
+|---|---|---|---|---|---|---|---|---|---|
+| Leaves | 32 | 1024 | 7776 | 59049 | 248832 | 1.05M | 3.2M | 9.8M | 24.3M |
+
+```bash
+cd "$AGT_ROOT/logs"
+bash "$AGT_REPO/scripts/isambard/magic_ladder.sh"             # fetches MAGIC on the login node, then submits
+sbatch "$AGT_REPO/scripts/isambard/ladders_aggregate.sbatch"  # once they have all finished
+```
+
+| Job | GPUs x `--time` | Runs | Estimate |
+|---|---|---|---|
+| [`magic.sbatch`](magic.sbatch) | 1 x 1 h | unrefined, 2^5, 2^10, 3^5x2^5, 3^10 | ~10 min |
+| [`magic_sharded.sbatch`](magic_sharded.sbatch) `4^5x3^5 4^10 5^5x4^5` | 4 x 4 h | | ~2.2 h |
+| [`magic_sharded.sbatch`](magic_sharded.sbatch) `5^10` | 4 x 10 h | | ~5 h |
+| [`magic_sharded.sbatch`](magic_sharded.sbatch) `6^5x5^5` | 4 x 24 h | | ~12 h |
+
+The estimates scale ~20 ms/leaf, measured on one RTX 5090, by the half-moons 5090:GH200 ratio
+(3.9 vs 1.42 ms/leaf). Check the first sharded job's elapsed times before relying on the 24 h one;
+6^10 (~31 h) does not fit in a job.

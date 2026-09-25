@@ -103,7 +103,7 @@ def compute_batch_gradients(
             bounded_loss,
             epsilon=epsilon,
             dims=split_dims,
-            n_splits=refinement_cfg.n_splits,
+            n_splits=input_refinement.split_counts(refinement_cfg, split_dims),
             leaf_chunk=leaf_chunk,
             label_k_poison=label_k_poison,
             label_epsilon=label_epsilon,
@@ -355,9 +355,12 @@ def log_run_start(config: AGTConfig, agt_type: Literal["poison", "privacy", "unl
         if config.input_refinement is not None:
             r = config.input_refinement
             LOGGER.info(
-                "\tInput-ball refinement: n_splits=%s, n_dims=%s, strategy=%s, max_leaves=%s, leaf_chunk=%s",
+                "\tInput-ball refinement: n_splits=%s, n_dims=%s, secondary_n_splits=%s, secondary_n_dims=%s, "
+                "strategy=%s, max_leaves=%s, leaf_chunk=%s",
                 r.n_splits,
                 r.n_dims,
+                r.secondary_n_splits,
+                r.secondary_n_dims,
                 r.strategy,
                 r.max_leaves,
                 r.leaf_chunk,

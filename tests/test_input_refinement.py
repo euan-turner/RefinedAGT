@@ -335,13 +335,20 @@ def test_t7_end_to_end_no_wider():
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("shape", [(5, 6), (3, 2, 2, 2)])
-@pytest.mark.parametrize("n_splits, dims", [(2, [0, 1, 2]), (3, [4, 1]), (4, [5]), (2, [1, 7, 99]), (2, [99])])
+@pytest.mark.parametrize(
+    "n_splits, dims",
+    [
+        (2, [0, 1, 2]), (3, [4, 1]), (4, [5]), (2, [1, 7, 99]), (2, [99]),
+        # per-dimension cuts (mixed radix); a count of 1 leaves its coordinate uncut
+        ([3, 2, 2], [0, 1, 2]), ([2, 4], [4, 1]), ([3, 1, 2], [0, 1, 2]), ([2, 3, 2], [1, 7, 99]),
+    ],
+)
 def test_t8_leaf_boxes_match_enumeration(dtype, shape, n_splits, dims):
     torch.manual_seed(0)
     batch = torch.rand(shape, dtype=dtype)
     eps = 0.3
     reference = list(input_refinement.iter_leaf_boxes(batch, eps, dims, n_splits))
-    n_leaves = n_splits ** len(input_refinement.cut_dims_of(batch, dims, n_splits))
+    n_leaves = input_refinement.count_leaves(batch, dims, n_splits)
     assert len(reference) == n_leaves
 
     # every leaf, and an arbitrary out-of-order subset
@@ -470,3 +477,78 @@ def test_t11_shard_leaves_does_not_change_hash():
         for shard in (False, True)
     ]
     assert configs[0].hash() == configs[1].hash()
+
+
+# ======================================================================================
+# T12 -- secondary tier: mixed per-dimension cuts (e.g. 3^5 * 2^5).
+# ======================================================================================
+
+
+def _t12_config(**refinement) -> agt.AGTConfig:
+    return agt.AGTConfig(
+        n_epochs=1, learning_rate=0.1, loss="cross_entropy", k_poison=5, epsilon=0.1,
+        input_refinement=agt.InputRefinementConfig(**refinement),
+    )
+
+
+def test_t12_unused_secondary_tier_keeps_existing_hashes():
+    # golden hash recorded before the secondary tier existed: cached runs keyed on it must stay valid
+    config = _t12_config(n_splits=3, n_dims=4, max_leaves=1000, leaf_chunk=8)
+    assert config.hash() == "f6937283e4ce4bed230de9fefbb79735"
+    assert config.hash() == _t12_config(
+        n_splits=3, n_dims=4, max_leaves=1000, leaf_chunk=8, secondary_n_splits=5, secondary_n_dims=0
+    ).hash()
+
+
+def test_t12_secondary_tier_changes_hash():
+    hashes = {
+        _t12_config(n_splits=3, n_dims=2, **secondary).hash()
+        for secondary in ({}, {"secondary_n_dims": 2}, {"secondary_n_dims": 2, "secondary_n_splits": 4})
+    }
+    assert len(hashes) == 3
+
+
+def test_t12_leaf_count_and_split_dims():
+    cfg = agt.InputRefinementConfig(n_splits=3, n_dims=2, secondary_n_splits=2, secondary_n_dims=3)
+    assert cfg.n_leaves == 3**2 * 2**3
+    assert cfg.dim_splits == [3, 3, 2, 2, 2]
+    bounded_model = _bounded(_model(6, 8, 2))
+    dims = input_refinement.select_split_dims(bounded_model, 0.1, cfg)
+    assert len(dims) == 5
+    # the primary tier takes the most sensitive coordinates
+    assert dims[:2] == input_refinement.select_split_dims(
+        bounded_model, 0.1, agt.InputRefinementConfig(n_splits=3, n_dims=2)
+    )
+    assert input_refinement.split_counts(cfg, dims) == [3, 3, 2, 2, 2]
+
+
+def _t12_bounds(n_splits, dims):
+    torch.manual_seed(0)
+    bounded_model = _bounded(_model(4, 10, 3, depth=2), param_radius=0.02)
+    loss = BoundedCrossEntropyLoss(reduction="none")
+    x = torch.randn(5, 4, dtype=torch.float64)
+    y = torch.randint(0, 3, (5,))
+    return input_refinement.refined_bound_backward_combined(
+        bounded_model, x, y, loss, epsilon=0.1, dims=dims, n_splits=n_splits, leaf_chunk=7
+    )
+
+
+def test_t12_uniform_secondary_matches_single_tier():
+    single = _t12_bounds(2, [0, 1, 2, 3])
+    tiered = _t12_bounds([2, 2, 2, 2], [0, 1, 2, 3])
+    for a, b in zip(single[0] + single[1], tiered[0] + tiered[1]):
+        assert torch.equal(a, b)
+
+
+def test_t12_finer_primary_tier_never_wider():
+    # cutting two coordinates into 4 refines cutting them into 2, so the hull can only shrink
+    coarse_l, coarse_u = _t12_bounds(2, [0, 1, 2, 3])
+    fine_l, fine_u = _t12_bounds([4, 4, 2, 2], [0, 1, 2, 3])
+    for cl, cu, fl, fu in zip(coarse_l, coarse_u, fine_l, fine_u):
+        assert (fl >= cl - ATOL).all() and (fu <= cu + ATOL).all()
+
+
+def test_t12_entry_rejects_over_max_leaves():
+    config = _t12_config(n_splits=3, n_dims=2, secondary_n_dims=3, max_leaves=3**2 * 2**3 - 1)
+    with pytest.raises(ValueError, match="max_leaves"):
+        input_refinement.validate_input_refinement(_bounded(_model(6, 8, 2)), config)
