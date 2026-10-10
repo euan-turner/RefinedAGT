@@ -1,3 +1,5 @@
+# Package metadata is mirrored in setup.py, which is kept for compatibility with upstream; tests/test_packaging.py
+# checks that the two agree. uv and the lockfile read this file.
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
@@ -16,6 +18,7 @@ dependencies = [
     "gurobipy >= 10.0",
     "numpy >= 1.9",
     "scipy >= 1.14",
+    "pytest >= 8.3",
 ]
 
 [project.urls]
@@ -39,9 +42,6 @@ experiments = [
     "scienceplots",
     "medmnist >= 3.0",
 ]
-
-[dependency-groups]
-dev = ["pytest >= 8.3"]
 
 [tool.setuptools.packages.find]
 include = ["abstract_gradient_training*"]
