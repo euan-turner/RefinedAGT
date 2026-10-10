@@ -75,7 +75,8 @@ def get_model(hidden_lay=1, hidden_size=50, seed=SEED):
         model.load_state_dict(torch.load(model_path, weights_only=True, map_location=NOMINAL_CONFIG.device))
         return model
     # save the model
-    script_utils.atomic_write(model_path, lambda tmp: torch.save(model.state_dict(), tmp))
+    with open(model_path, "wb") as file:
+        torch.save(model.state_dict(), file)
     model = model.to(NOMINAL_CONFIG.device)
     return model
 

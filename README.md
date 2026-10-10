@@ -65,17 +65,19 @@ Abstract gradient training often requires training with large batchsizes. This c
 
 ### Input-ball refinement (poisoning)
 
-`poison_certified_training` can partition the feature-poisoning `epsilon`-ball into a grid of sub-boxes, propagate each leaf through the ordinary bounding pass, and hull the per-sample gradient bounds over the leaves. This never widens the certified bound and is **off by default**: leave `AGTConfig.input_refinement` at `None` to reproduce the shipped bound exactly. Enable it with an `InputRefinementConfig`:
+`poison_certified_training` can partition the feature-poisoning `epsilon`-ball into a grid of sub-boxes ("leaves"), bound each leaf with the ordinary bounding pass, and hull the per-sample gradient bounds over the leaves. The result is sound and never wider than the unrefined bound, and it is **off by default**: leave `AGTConfig.input_refinement` at `None` to get the unrefined bound exactly. Enable it with an `InputRefinementConfig`:
 
 ```python
 config = agt.AGTConfig(
     n_epochs=10, learning_rate=0.02, loss="cross_entropy",
-    k_poison=10, epsilon=0.05, clip_gamma=1.0,
-    input_refinement=agt.InputRefinementConfig(n_splits=2, n_dims=4),  # 16 leaves per fragment
+    k_poison=10, epsilon=0.05,
+    input_refinement=agt.InputRefinementConfig(splits=[2, 2, 2, 2]),  # bisect 4 input features: 16 leaves
 )
 ```
 
-The cost is `n_splits ** n_dims` bounding passes per fragment — exponential in the split dimensions and flat in the batch size — so it is guarded by `max_leaves`, which raises rather than warns. Memory is controlled through `fragsize` exactly as above (leaves are stacked into the fragment's headroom, `leaf_chunk` overrides). Refinement only tightens the certificate when the per-sample gradient endpoints are not already pinned by `clip_gamma`; there is no cheap way to predict this, and it is not enabled automatically.
+`splits` gives the number of pieces each selected input feature is cut into, most sensitive feature first (ranked by the first-layer weights; `strategy="first"` takes the leading features instead). `[3] * 5 + [2] * 5` cuts five features into three and five more into two. The cost is one bounding pass per leaf, `prod(splits)` of them: exponential in the number of features cut and flat in the batch size. It is guarded by `max_leaves`, which raises rather than warns. Leaves are stacked `leaf_chunk` at a time into one bounding call (by default as many as fit in `fragsize` rows), and `shard_leaves=True` splits them across the ranks of an initialised `torch.distributed` process group with the same result.
+
+The soundness argument, its assumptions and the floating-point limitation are in [docs/input_refinement_soundness.md](docs/input_refinement_soundness.md). The experiments and figure of the refinement paper are in [scripts/refinement_paper](scripts/refinement_paper).
 
 ### Floating point stability
 
@@ -89,7 +91,8 @@ The training batchsize has a significant effect on the tightness of the bounds a
 
 ### Unreleased
 
-- Added optional input-ball refinement for `poison_certified_training` via `AGTConfig.input_refinement` (off by default, bit-identical to the shipped bound when disabled).
+- Added optional input-ball refinement for `poison_certified_training` via `AGTConfig.input_refinement` (off by default; the bound is unchanged when disabled).
+- Fixed `clip_method="norm"` for bias gradients, which were reshaped as if every gradient were `[batch, out, in]`.
 
 ### 2025-02-05
 

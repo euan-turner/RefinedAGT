@@ -1,0 +1,213 @@
+{
+ "task": "magic",
+ "title": "MAGIC ($d=10$)",
+ "cells": [
+  {
+   "k": 200,
+   "epsilon": 0.01,
+   "baseline": {
+    "task": "magic",
+    "k": 200,
+    "epsilon": 0.01,
+    "rung": "unrefined",
+    "splits": null,
+    "leaves": 1,
+    "dtype": "float64",
+    "violation": 0.0,
+    "seconds": 3.4183883666992188,
+    "world_size": 2,
+    "peak_gib": 0.42143869400024414,
+    "metrics": {
+     "cert_acc": 0.5985804200172424,
+     "nominal_acc": 0.7891692519187927,
+     "best_acc": 0.9058884978294373,
+     "majority_acc": 0.6482649842271293,
+     "box_width": 10.52934816110312
+    }
+   },
+   "rungs": [
+    {
+     "task": "magic",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "2^5",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 32,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 3.238675355911255,
+     "world_size": 2,
+     "peak_gib": 2.66416597366333,
+     "metrics": {
+      "cert_acc": 0.6253942847251892,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.894584596157074,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 9.129392956912946
+     }
+    },
+    {
+     "task": "magic",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "2^10",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 1024,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 11.858915567398071,
+     "world_size": 2,
+     "peak_gib": 14.732836246490479,
+     "metrics": {
+      "cert_acc": 0.6524710655212402,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8814405202865601,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 7.859959913986711
+     }
+    },
+    {
+     "task": "magic",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "3^5x2^5",
+     "splits": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 7776,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 68.17854261398315,
+     "world_size": 2,
+     "peak_gib": 14.731711864471436,
+     "metrics": {
+      "cert_acc": 0.6624605059623718,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8769715428352356,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 7.4181515945083065
+     }
+    },
+    {
+     "task": "magic",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "3^10",
+     "splits": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+     ],
+     "leaves": 59049,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 529.8182761669159,
+     "world_size": 2,
+     "peak_gib": 14.732604503631592,
+     "metrics": {
+      "cert_acc": 0.6724500060081482,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8725025653839111,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 7.014212155453736
+     }
+    },
+    {
+     "task": "magic",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "4^5x3^5",
+     "splits": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      3,
+      3,
+      3,
+      3,
+      3
+     ],
+     "leaves": 248832,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 2255.895349264145,
+     "world_size": 2,
+     "peak_gib": 14.731995582580566,
+     "metrics": {
+      "cert_acc": 0.6763932108879089,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8714510798454285,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 6.801408200647084
+     }
+    },
+    {
+     "task": "magic",
+     "k": 200,
+     "epsilon": 0.01,
+     "rung": "4^10",
+     "splits": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+     ],
+     "leaves": 1048576,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 9398.907996177673,
+     "world_size": 2,
+     "peak_gib": 14.733628273010254,
+     "metrics": {
+      "cert_acc": 0.6805993318557739,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8685593605041504,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 6.605936453968335
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -58,14 +58,12 @@ examples = [
 experiments = [
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
-    { name = "matplotlib-label-lines", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "medmnist", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "scienceplots", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "scikit-learn", version = "1.9.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "seaborn", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "tqdm", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
-    { name = "uci-datasets", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
 ]
 
 [package.dev-dependencies]
@@ -79,7 +77,6 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'examples'", specifier = ">=3.9" },
     { name = "matplotlib", marker = "extra == 'experiments'", specifier = ">=3.9" },
     { name = "matplotlib-label-lines", marker = "extra == 'examples'", specifier = ">=0.7" },
-    { name = "matplotlib-label-lines", marker = "extra == 'experiments'", specifier = ">=0.7" },
     { name = "medmnist", marker = "extra == 'examples'", specifier = ">=3.0" },
     { name = "medmnist", marker = "extra == 'experiments'", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=1.9" },
@@ -98,7 +95,6 @@ requires-dist = [
     { name = "torchvision", marker = "platform_machine == 'x86_64'", specifier = ">=0.19", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", marker = "extra == 'experiments'" },
     { name = "uci-datasets", marker = "extra == 'examples'", git = "https://github.com/treforevans/uci_datasets.git" },
-    { name = "uci-datasets", marker = "extra == 'experiments'", git = "https://github.com/treforevans/uci_datasets.git" },
 ]
 provides-extras = ["examples", "experiments"]
 

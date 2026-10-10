@@ -30,16 +30,14 @@ examples = [
     "uci_datasets @ git+https://github.com/treforevans/uci_datasets.git",
     "matplotlib-label-lines >= 0.7",
 ]
-# scripts/poisoning_paper: CIFAR-10 PCA, OCT-MNIST PCA, UCI house-electric and half-moons experiments
+# scripts/refinement_paper: the input-ball refinement experiments and figure
 experiments = [
     "scikit-learn >= 1.5",  # PCA svd_solver="covariance_eigh"
     "tqdm",
     "matplotlib >= 3.9",
     "seaborn >= 0.13",
     "scienceplots",
-    "matplotlib-label-lines >= 0.7",
     "medmnist >= 3.0",
-    "uci_datasets @ git+https://github.com/treforevans/uci_datasets.git",
 ]
 
 [dependency-groups]
