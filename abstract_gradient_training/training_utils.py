@@ -64,9 +64,9 @@ def compute_batch_gradients(
         nominal (bool): Whether to compute nominal gradients or bounds on the gradients.
         poisoned (bool, optional): Whether to additionally compute bounds wrt the poisoning adversary stored in the
             config. Defaults to False.
-        split_dims (list[int] | None, optional): Flattened input coordinates to partition when
-            `poisoned` is True and `config.input_refinement` is set. If None, they are selected here
-            from the current nominal weights; the poisoning trainer passes a per-step choice instead.
+        split_dims (list[int] | None, optional): Flattened input coordinates to partition, one per
+            entry of `config.input_refinement.splits`. Required when `poisoned` is True and
+            `config.input_refinement` is set (see input_refinement.select_split_dims).
 
     Returns:
         tuple[list[torch.Tensor], list[torch.Tensor]] | list[torch.Tensor]: If `nominal` is True, return the list of
@@ -94,7 +94,7 @@ def compute_batch_gradients(
     if poisoned and config.input_refinement is not None:
         refinement_cfg = config.input_refinement
         if split_dims is None:
-            split_dims = input_refinement.select_split_dims(bounded_model, config.epsilon, refinement_cfg)
+            raise ValueError("split_dims is required when config.input_refinement is set")
         leaf_chunk = input_refinement.resolve_leaf_chunk(refinement_cfg, config.fragsize, batch.size(0))
         grads_l, grads_u = input_refinement.refined_bound_backward_combined(
             bounded_model,
@@ -103,7 +103,7 @@ def compute_batch_gradients(
             bounded_loss,
             epsilon=epsilon,
             dims=split_dims,
-            n_splits=input_refinement.split_counts(refinement_cfg, split_dims),
+            splits=refinement_cfg.splits,
             leaf_chunk=leaf_chunk,
             label_k_poison=label_k_poison,
             label_epsilon=label_epsilon,
@@ -355,12 +355,8 @@ def log_run_start(config: AGTConfig, agt_type: Literal["poison", "privacy", "unl
         if config.input_refinement is not None:
             r = config.input_refinement
             LOGGER.info(
-                "\tInput-ball refinement: n_splits=%s, n_dims=%s, secondary_n_splits=%s, secondary_n_dims=%s, "
-                "strategy=%s, max_leaves=%s, leaf_chunk=%s",
-                r.n_splits,
-                r.n_dims,
-                r.secondary_n_splits,
-                r.secondary_n_dims,
+                "\tInput-ball refinement: splits=%s, strategy=%s, max_leaves=%s, leaf_chunk=%s",
+                r.splits,
                 r.strategy,
                 r.max_leaves,
                 r.leaf_chunk,

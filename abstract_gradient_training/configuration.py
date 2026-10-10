@@ -6,7 +6,8 @@ The configuration class also provides some QOL logging functions for logging AGT
 
 import logging
 import hashlib
-from typing import Literal
+import math
+from typing import Annotated, Literal
 from collections.abc import Callable
 
 import pydantic
@@ -35,25 +36,22 @@ EXCLUDE_FIELDS = [
     "bounded_optimizer_fn",
 ]
 
+
 class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
     """
     Partitioning of the feature-poisoning ball for poison-certified training.
 
-    Setting ``AGTConfig.input_refinement`` to ``None`` reproduces the shipped bound exactly; 
-    a populated config always refines (``n_splits == 1`` is rejected as a no-op).
+    ``splits`` gives the number of equal pieces each selected input coordinate is cut into, in the
+    order ``strategy`` ranks the coordinates: ``[2] * 4`` bisects four coordinates (16 leaves) and
+    ``[3] * 5 + [2] * 5`` cuts the five highest-ranked into three and the next five into two.
+
+    Setting ``AGTConfig.input_refinement`` to ``None`` reproduces the unrefined bound exactly.
     """
 
-    n_splits: int = pydantic.Field(2, ge=2, description="Equal cuts per split dimension")
-    n_dims: int = pydantic.Field(2, ge=1, description="Number of input coordinates to split")
-    secondary_n_splits: int = pydantic.Field(
-        2, ge=2, description="Equal cuts per secondary split dimension; unused when secondary_n_dims is 0"
+    splits: list[Annotated[int, pydantic.Field(ge=2)]] = pydantic.Field(
+        min_length=1, description="Equal cuts for each selected input coordinate, highest-ranked first"
     )
-    secondary_n_dims: int = pydantic.Field(
-        0,
-        ge=0,
-        description="Number of further coordinates, ranked after the n_dims primary ones, cut into secondary_n_splits",
-    )
-    strategy: Literal["sensitivity", "widest", "first"] = pydantic.Field(
+    strategy: Literal["sensitivity", "first"] = pydantic.Field(
         "sensitivity", description="How to choose the split coordinates; see input_refinement.select_split_dims"
     )
     max_leaves: int = pydantic.Field(
@@ -62,8 +60,7 @@ class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
     leaf_chunk: int | None = pydantic.Field(
         None, ge=1, description="Leaves stacked into one bounding call; None derives it from fragsize"
     )
-    # repr=False keeps the field out of AGTConfig.hash(): sharding does not change the result, so a
-    # sharded run shares its cache key with the single-process run of the same configuration
+    # repr=False keeps the field out of AGTConfig.hash(): sharding does not change the result
     shard_leaves: bool = pydantic.Field(
         False,
         repr=False,
@@ -72,22 +69,9 @@ class InputRefinementConfig(pydantic.BaseModel, extra="forbid"):
 
     @property
     def n_leaves(self) -> int:
-        """Leaf count from the requested split, before capping by the true input dimension."""
-        return self.n_splits**self.n_dims * self.secondary_n_splits**self.secondary_n_dims
+        """Number of leaves the partition has: the product of ``splits``."""
+        return math.prod(self.splits)
 
-    @property
-    def dim_splits(self) -> list[int]:
-        """Cuts for each selected coordinate, in selection order: n_splits for the first n_dims, then
-        secondary_n_splits for the next secondary_n_dims."""
-        return [self.n_splits] * self.n_dims + [self.secondary_n_splits] * self.secondary_n_dims
-
-    def __repr_args__(self):
-        # AGTConfig.hash() hashes this repr: leave the secondary tier out of it while it is unused, so
-        # configurations written before the tier existed keep their hashes (and their cached results)
-        for name, value in super().__repr_args__():
-            if self.secondary_n_dims == 0 and name in ("secondary_n_splits", "secondary_n_dims"):
-                continue
-            yield name, value
 
 class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True):
     """Configuration class for the abstract gradient training module."""
@@ -120,12 +104,10 @@ class AGTConfig(pydantic.BaseModel, extra="forbid", arbitrary_types_allowed=True
     paired_poison: bool = pydantic.Field(
         False, description="Whether the label and feature poisoning are paired (i.e. the same samples are poisoned)."
     )
-    
     input_refinement: InputRefinementConfig | None = pydantic.Field(
         None,
-        description="Optional refinement of the feature-poisoning ball. None reproduces the shipped bound.",
+        description="Optional refinement of the feature-poisoning ball. None reproduces the unrefined bound.",
     )
-
     # unlearning parameters
     k_unlearn: int = pydantic.Field(0, ge=0, description="Number of removals per batch to be certified")
     # privacy and dp-sgd parameters
