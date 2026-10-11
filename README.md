@@ -77,7 +77,7 @@ config = agt.AGTConfig(
 
 `splits` gives the number of pieces each selected input feature is cut into, most sensitive feature first (ranked by the first-layer weights; `strategy="first"` takes the leading features instead). `[3] * 5 + [2] * 5` cuts five features into three and five more into two. The cost is one bounding pass per leaf, `prod(splits)` of them: exponential in the number of features cut and flat in the batch size. It is guarded by `max_leaves`, which raises rather than warns. Leaves are stacked `leaf_chunk` at a time into one bounding call (by default as many as fit in `fragsize` rows), and `shard_leaves=True` splits them across the ranks of an initialised `torch.distributed` process group with the same result.
 
-The soundness argument, its assumptions and the floating-point limitation are in [docs/input_refinement_soundness.md](docs/input_refinement_soundness.md). The experiments and figure of the refinement paper are in [scripts/refinement_paper](scripts/refinement_paper).
+The soundness argument, its assumptions and the floating-point limitation are in [docs/input_refinement_soundness.md](docs/input_refinement_soundness.md). The experiments and figure of the refinement paper are in [scripts/refinement_paper](scripts/refinement_paper). To reproduce its results from a fresh clone, follow [REPRODUCTION.md](REPRODUCTION.md).
 
 ### Floating point stability
 

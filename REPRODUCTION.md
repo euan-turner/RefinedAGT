@@ -74,7 +74,6 @@ what later runs share; every run also does this on first use.
 
 `.data/`, `.models/`, `.results/` and `.figures/` are under `$AGT_ROOT` when it is set, otherwise under
 `scripts/refinement_paper/`. OCT-MNIST is the exception: medmnist always writes to the home directory.
-The downloads total well under 1 GB.
 
 Prepare all four tasks once before launching runs in parallel, so that parallel runs do not race to
 write the PCA bases and pre-trained models:
@@ -184,14 +183,6 @@ commands that compute it; go back to step 3.
 
 To bring results back, copy `$AGT_ROOT/.results/*.json` (enough for the figure) or all of
 `$AGT_ROOT/.results/` (the record and certified parameter box of every run).
-
-### Other Slurm clusters
-
-The launchers assume Isambard-AI: `$PROJECTDIR` and `$SCRATCHDIR` in `env.sh`, `--gpus=1` and
-`--gpus=4` on one node, a 24 h limit, and no partition or account options. Elsewhere, export
-`AGT_REPO`, `AGT_ROOT` and `SCRATCHDIR` before sourcing `env.sh`, and pass cluster options to the
-`sbatch` calls (for example through the `SBATCH_PARTITION` and `SBATCH_ACCOUNT` environment
-variables). Runs of 2^16 leaves or more are sharded over exactly 4 GPUs by `run_4gpu.sbatch`.
 
 ## C. Full reproduction on one workstation
 

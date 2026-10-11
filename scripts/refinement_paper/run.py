@@ -1,6 +1,6 @@
 """
 Launches certified-training runs of the input-ball refinement experiments and prints their records.
-This is the only script that trains; it is the unit of work the Slurm jobs launch (slurm/).
+This is the only script that trains; it is the unit of work the Slurm jobs launch (isambard/).
 
 Usage:
     [torchrun --standalone --nproc-per-node N] python run.py <task> [--k K ...] [--eps E ...]
@@ -22,7 +22,7 @@ with the same result as on one. Rank 0 prints one JSON record per run.
     --gpus 4   only runs with at least 2^16 leaves (sharded across a 4-GPU node)
     --missing  only runs with no cached record, plus a ``--dtype float64`` rerun for every run whose
                bounds were violated in the task's default precision
-Each line ends with ``# <estimated GPU-seconds>``, which slurm/submit.sh turns into a time limit.
+Each line ends with ``# <estimated GPU-seconds>``, which isambard/submit.sh turns into a time limit.
 
 Key external dependencies: torch.distributed (NCCL, for sharded refinement), and the sibling modules
 harness and tasks.
