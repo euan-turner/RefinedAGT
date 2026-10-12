@@ -230,7 +230,8 @@ def run(task, k, epsilon, splits, dtype=None):
 
     Returns:
         dict: the run record -- the run's identity (task, k, epsilon, rung, splits, leaves, dtype),
-            its cost (seconds, world_size, peak_gib), the worst bound violation, and ``metrics``:
+            its cost (seconds: wall-clock time of certified training, excluding data preparation
+            and evaluation; world_size; peak_gib), the worst bound violation, and ``metrics``:
             the task's certified test metrics, always including ``cert_acc``, ``nominal_acc`` and
             ``box_width``. Only rank 0's record carries the metrics.
     """

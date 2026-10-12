@@ -34,7 +34,8 @@ its data, model, schedule and what its metrics mean.
 
 Outputs go under `$AGT_ROOT` when it is set, otherwise next to these scripts: `.results/` (runs and
 results files), `.models/`, `.data/`, `.figures/`. A run is `.results/runs/<task>/k<k>_eps<eps>_<dtype>/<rung>`:
-`.json` is its record (certified metrics, run time, GPUs, peak memory, worst bound violation) and
+`.json` is its record (certified metrics, wall-clock time of certified training in `seconds`, GPUs, peak
+memory, worst bound violation) and
 `.pt` its certified parameter box.
 
 ## Setup
