@@ -18,6 +18,12 @@ moved anywhere within an l_inf ball of radius ``epsilon``. Reported over the cer
 (tasks/pca_features.certified_metrics): certified and nominal accuracy and cross-entropy on the
 drusen test split, accuracy on the clean test split, and box width.
 
+Ladder attack. k=200 and epsilon=0.02, the radius of the CIFAR-10 ladder in the same [0, 1]-scaled
+PCA units. The median l_inf distance from a drusen training scan to its nearest training scan of the
+other class is 0.044, so epsilon=0.1 (the radius used before) would let a poisoned scan be moved past
+a typical scan of the other class, which is a large-epsilon attack rather than the small-epsilon one
+this ladder stands for.
+
 Precision. float32 holds for this schedule at this width but not by a wide margin (at d=12 the same
 schedule violates its bounds by up to 1e-1), so every run records its worst bound violation and
 aggregate.py reports the float64 rerun of any run that exceeds harness.VIOLATION_TOLERANCE.
@@ -45,7 +51,7 @@ PCA_DIMS = 15
 TITLE = f"OCT-MNIST (PCA, $d={PCA_DIMS}$)"
 DTYPE = torch.float32
 K_POISON = 200
-EPSILON = 0.1
+EPSILON = 0.02
 LADDER = ["2^5", "2^10", "2^15", "3^10", "3^12", "4^10", "3^15"]
 LEAF_CHUNK = 16
 SECONDS_PER_LEAF = 6e-3  # one GH200, float32

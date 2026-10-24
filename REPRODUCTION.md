@@ -1,33 +1,41 @@
-# Reproducing the refinement ladders
+# Reproducing the refinement experiments
 
-How to reproduce the four refinement ladders of the input-ball refinement paper and the figure drawn
-from them (`refinement_ladders.pdf`), from a fresh clone. What the experiments are, and every option of
-the scripts, is in [scripts/refinement_paper/README.md](scripts/refinement_paper/README.md); the
-soundness argument is in [docs/input_refinement_soundness.md](docs/input_refinement_soundness.md).
+How to reproduce every experiment of the input-ball refinement paper and the figures drawn from them
+(`refinement_ladders.pdf`, `threat_grid.pdf`), from a fresh clone. Every route goes through one
+entrypoint, [scripts/refinement_paper/reproduce.sh](scripts/refinement_paper/reproduce.sh), whose
+`EXPERIMENTS` list is the complete set of runs. Why each experiment is run, and every option of the
+scripts, is in [scripts/refinement_paper/README.md](scripts/refinement_paper/README.md); the soundness
+argument is in [docs/input_refinement_soundness.md](docs/input_refinement_soundness.md).
 
 There are three routes, in increasing cost:
 
 | Route | What it reproduces | Cost |
 |---|---|---|
-| [A. Figure from the shipped results](#a-figure-from-the-shipped-results) | the published figure | seconds, no GPU |
-| [B. Slurm cluster (Isambard-AI)](#b-full-reproduction-on-isambard-ai) | every run, the tables, the figure | 19 jobs, about 45 GPU-hours |
-| [C. One workstation](#c-full-reproduction-on-one-workstation) | the same | about 45 GPU-hours in sequence |
+| [A. Figure from the shipped results](#a-figure-from-the-shipped-results) | the published ladder figure | seconds, no GPU |
+| [B. Slurm cluster (Isambard-AI)](#b-full-reproduction-on-isambard-ai) | every run, the tables, both figures | 34 jobs, about 61 GPU-hours |
+| [C. One workstation](#c-full-reproduction-on-one-workstation) | the same | about 61 GPU-hours in sequence |
 
 ## What is run
 
 Each ladder is one task at one attack: the unrefined certificate, then the certificate at each rung.
 A rung `N^D` cuts the `D` most sensitive input features into `N` pieces each (`N^D` leaves).
 
-| Task | Attack | Rungs | Runs | Estimated GPU-hours |
-|---|---|---|---|---|
-| `cifar` | k=200, eps=0.02 | 2^4 2^8 2^12 2^16 2^20 4^8 4^10 | 8 | 2.2 |
-| `octmnist` | k=200, eps=0.1 | 2^5 2^10 2^15 3^10 3^12 4^10 3^15 | 8 | 26.7 |
-| `halfmoons` | k=200, eps=0.01 | 2^6 3^6 4^6 5^6 6^6 8^6 10^6 12^6 16^6 | 10 | 8.8 |
-| `magic` | k=200, eps=0.01 | 2^5 2^10 3^5x2^5 3^10 4^5x3^5 4^10 | 7 | 6.8 |
+| Experiment | Task | Attack | Rungs | Runs | Estimated GPU-hours |
+|---|---|---|---|---|---|
+| ladder | `cifar` | k=200, eps=0.02 | 2^4 2^8 2^12 2^16 2^20 4^8 4^10 | 8 | 2.2 |
+| ladder | `octmnist` | k=200, eps=0.02 | 2^5 2^10 2^15 3^10 3^12 4^10 3^15 | 8 | 26.7 |
+| ladder | `halfmoons` | k=200, eps=0.01 | 2^6 3^6 4^6 5^6 6^6 8^6 10^6 12^6 16^6 | 10 | 8.8 |
+| ladder | `magic` | k=200, eps=0.01 | 2^5 2^10 3^5x2^5 3^10 4^5x3^5 4^10 | 7 | 6.8 |
+| small k | `halfmoons` | k=25, eps=0.05 | as its ladder | 10 | 8.8 |
+| small k | `magic` | k=25, eps=0.1 | as its ladder | 7 | 6.8 |
+| small k | `cifar` | k=25, eps=0.1 | 2^20 | 2 | 1.0 |
+| small k | `octmnist` | k=25, eps=0.1 | 2^15 | 2 | 0.1 |
+| threat grid | each task | k ∈ {5, 10, 25, 50, 100, 200} × eps ∈ {0.005, 0.01, 0.02, 0.05, 0.1, 0.2} | unrefined | 144 | 0.1 |
 
-"Runs" includes the unrefined run. The estimates are leaves times each task's measured
-`SECONDS_PER_LEAF` (one GH200; MAGIC was measured on an RTX 5090), and OCT-MNIST 3^15 alone is 24 of
-the 45 hours. `python run.py <task> --list` prints the runs of a task with their estimates.
+"Runs" includes the unrefined run; the grid shares 8 of its unrefined runs with the other experiments,
+so there are 190 distinct runs. The estimates are leaves times each task's measured `SECONDS_PER_LEAF`
+(one GH200; MAGIC was measured on an RTX 5090), and OCT-MNIST 3^15 alone is 24 of the 61 hours.
+`bash scripts/refinement_paper/reproduce.sh list` prints every run with its estimate.
 
 ## Requirements
 
@@ -83,12 +91,13 @@ cd scripts/refinement_paper
 for task in cifar octmnist halfmoons magic; do python run.py $task --prepare; done
 ```
 
-On Isambard-AI this is step 2 of route B and is not run by hand.
+On Isambard-AI this is part of step 3 of route B and is not run by hand.
 
 ## A. Figure from the shipped results
 
 [scripts/refinement_paper/reference/](scripts/refinement_paper/reference) holds the results files the
-published figure was drawn from. No training and no GPU:
+published ladder figure was drawn from. No training and no GPU (`reference/octmnist.json` is still the
+earlier eps=0.1 ladder, so this fails until it is replaced by the eps=0.02 one):
 
 ```bash
 cd scripts/refinement_paper
@@ -118,46 +127,44 @@ source scripts/refinement_paper/isambard/env.sh      # again: activates the venv
 (`$PROJECTDIR/$USER/agt`, where all outputs go). Source it at the start of every later session; jobs
 inherit both variables. To use another location, export `AGT_REPO` or `AGT_ROOT` before sourcing it.
 
-### 2. Check the node and prepare the data
+### 2. Check the node
 
 ```bash
-S="$AGT_REPO/scripts/refinement_paper/isambard"
+R="$AGT_REPO/scripts/refinement_paper"
 mkdir -p "$AGT_ROOT/logs" && cd "$AGT_ROOT/logs"     # job logs are written to the submit directory
-sbatch "$S/smoke.sbatch"       # 4 GPUs, 45 min limit
-sbatch "$S/prepare.sbatch"     # 1 GPU, 1 h limit
+sbatch "$R/isambard/smoke.sbatch"                    # 4 GPUs, 45 min limit
 ```
 
-Wait for both before submitting anything else.
+Wait for it before submitting anything else. `smoke.sbatch` checks the GPUs, the torch build, the NCCL
+all-reduce that sharded runs use, and runs the test suite. On aarch64 one upstream test,
+`test_bounded_sgd[ce-10-1-1.0-0.0-0.0]`, has failed from a float32 rounding difference between the
+Grace CPU's BLAS and x86. Investigate any other failure.
 
-- `smoke.sbatch` checks the GPUs, the torch build, the NCCL all-reduce that sharded runs use, and runs
-  the test suite. On aarch64 one upstream test, `test_bounded_sgd[ce-10-1-1.0-0.0-0.0]`, has failed
-  from a float32 rounding difference between the Grace CPU's BLAS and x86. Investigate any other
-  failure.
-- `prepare.sbatch` runs `run.py <task> --prepare` for the four tasks: the downloads, PCA bases and
-  pre-trained models of [Datasets](#datasets). The downloads happen inside the job, on a compute node.
-
-### 3. Submit the ladders
+### 3. Submit every experiment
 
 ```bash
-for task in cifar octmnist halfmoons magic; do
-    bash "$S/submit.sh" $task
-done
+bash "$R/reproduce.sh" isambard
 ```
 
-For each task `submit.sh` submits one 1-GPU job that runs every run under 2^16 leaves in sequence, and
-one 4-GPU job for each larger run, its leaves sharded over the node:
+This submits `prepare.sbatch` (1 GPU, 1 h limit), which runs `run.py <task> --prepare` for the four
+tasks: the downloads, PCA bases and pre-trained models of [Datasets](#datasets), on a compute node. It
+then calls `submit.sh` once per experiment of `reproduce.sh`, with every job held until preparation
+succeeds. For each experiment `submit.sh` submits one 1-GPU job that runs its uncached runs under 2^16
+leaves in sequence, and one 4-GPU job for each larger run, its leaves sharded over the node:
 
-| Task | 1-GPU job (`agt-<task>`) | 4-GPU jobs (`agt-<task>-4gpu`) |
+| Experiment | 1-GPU job (`agt-<task>`) | 4-GPU jobs (`agt-<task>-4gpu`) |
 |---|---|---|
-| `cifar` | unrefined 2^4 2^8 2^12 | 2^16, 4^8, 2^20, 4^10 |
-| `octmnist` | unrefined 2^5 2^10 2^15 3^10 | 3^12, 4^10, 3^15 |
-| `halfmoons` | unrefined 2^6 3^6 4^6 5^6 6^6 | 8^6, 10^6, 12^6, 16^6 |
-| `magic` | unrefined 2^5 2^10 3^5x2^5 3^10 | 4^5x3^5, 4^10 |
+| `cifar` ladder | unrefined 2^4 2^8 2^12 | 2^16, 4^8, 2^20, 4^10 |
+| `octmnist` ladder | unrefined 2^5 2^10 2^15 3^10 | 3^12, 4^10, 3^15 |
+| `halfmoons` ladder, and at small k | unrefined 2^6 3^6 4^6 5^6 6^6 | 8^6, 10^6, 12^6, 16^6 |
+| `magic` ladder, and at small k | unrefined 2^5 2^10 3^5x2^5 3^10 | 4^5x3^5, 4^10 |
+| `cifar` at small k | unrefined | 2^20 |
+| `octmnist` at small k | unrefined 2^15 | none |
+| threat grid, each task | its 36 unrefined runs | none |
 
-That is 4 one-GPU jobs and 13 four-GPU jobs, 19 jobs with the smoke and prepare jobs. Each job's time
-limit is twice its estimate plus 30 minutes. The longest, OCT-MNIST 3^15, is estimated at 6 h on four
-GPUs and submitted with a 12.5 h limit. `submit.sh` prints each job id and writes the run lists it
-submitted to `$AGT_ROOT/manifests/`.
+Each job's time limit is twice its estimate plus 30 minutes. The longest, OCT-MNIST 3^15, is estimated
+at 6 h on four GPUs and submitted with a 12.5 h limit. `submit.sh` prints each job id and writes the
+run lists it submitted to `$AGT_ROOT/manifests/`.
 
 Check outcomes with `sacct` rather than polling `squeue`:
 
@@ -166,22 +173,22 @@ sacct -X -S <date> --format=JobID%20,JobName%22,State,Elapsed,Timelimit,ExitCode
 ```
 
 Finished runs are cached, so a job that fails or times out keeps the runs it completed. To resubmit
-what is left, run `submit.sh <task>` again once that task's jobs have left the queue: it submits only
-runs with no record, plus a float64 rerun of any float32 run whose bounds were violated by more than
-`1e-3` (see [Precision](scripts/refinement_paper/README.md#precision)). Repeat until it submits
-nothing.
+what is left, run `reproduce.sh isambard` again once the jobs have left the queue: it submits only runs
+with no record, plus a float64 rerun of any float32 run whose bounds were violated by more than `1e-3`
+(see [Precision](scripts/refinement_paper/README.md#precision)). `reproduce.sh list --missing` shows
+what that would submit; repeat until it lists nothing.
 
 ### 4. Aggregate and plot, on a login node
 
 ```bash
-bash "$S/aggregate.sh"
+bash "$R/reproduce.sh" results
 ```
 
-This prints each ladder's table, writes `$AGT_ROOT/.results/<task>.json`, and draws
-`$AGT_ROOT/.figures/refinement_ladders.{pdf,png}`. If a run is missing it exits with the `run.py`
-commands that compute it; go back to step 3.
+This prints each experiment's table, writes `$AGT_ROOT/.results/<experiment>.json`, and draws
+`$AGT_ROOT/.figures/refinement_ladders.{pdf,png}` and `$AGT_ROOT/.figures/threat_grid.{pdf,png}`. If a
+run is missing it lists the `run.py` commands that compute it; go back to step 3.
 
-To bring results back, copy `$AGT_ROOT/.results/*.json` (enough for the figure) or all of
+To bring results back, copy `$AGT_ROOT/.results/*.json` (enough for the figures) or all of
 `$AGT_ROOT/.results/` (the record and certified parameter box of every run).
 
 ## C. Full reproduction on one workstation
@@ -190,35 +197,32 @@ After [Clone and install](#clone-and-install) and the `--prepare` loop of [Datas
 
 ```bash
 cd scripts/refinement_paper
-for task in cifar octmnist halfmoons magic; do
-    python run.py $task             # the unrefined run and the whole ladder; cached, so safe to re-run
-    python aggregate.py $task       # table on stdout, .results/$task.json
-done
-python plot_ladders.py              # -> .figures/refinement_ladders.{pdf,png}
+bash reproduce.sh local       # every run, in sequence on one GPU; cached, so safe to re-run
+bash reproduce.sh results     # tables, .results/<experiment>.json, .figures/{refinement_ladders,threat_grid}.*
 ```
 
-Runs are cached, so an interrupted `run.py` resumes at the first unfinished run. With several GPUs,
-shard the expensive rungs over them with torchrun, which gives the same result as one GPU:
+Runs are cached, so an interrupted `local` resumes at the first unfinished run. With several GPUs,
+shard the expensive rungs over them with torchrun first, which gives the same result as one GPU, and
+`local` then finds them cached:
 
 ```bash
-python run.py octmnist --rungs unrefined 2^5 2^10 2^15 3^10
 torchrun --standalone --nproc-per-node 2 run.py octmnist --rungs 3^12 4^10 3^15
 ```
 
-If `aggregate.py` reports a run whose bounds were violated, it prints the `run.py ... --dtype float64`
-command that reruns it.
+If `results` reports a run whose bounds were violated, it prints the `run.py ... --dtype float64`
+command that reruns it; `reproduce.sh list --missing` lists all of them.
 
 ## Checking the result
 
-Compare the tables `aggregate.py` prints, or `.results/<task>.json`, with the file of the same name in
-[scripts/refinement_paper/reference/](scripts/refinement_paper/reference). Each record's
+Compare the ladder tables `reproduce.sh results` prints, or `.results/<task>.json`, with the file of
+the same name in [scripts/refinement_paper/reference/](scripts/refinement_paper/reference). Each record's
 `metrics` holds `cert_acc`, `nominal_acc` and `box_width`.
 
 - `halfmoons` and `magic` start from a seeded initialisation and reproduce the reference values across
   machines.
-- `cifar` and `octmnist` start from a model pre-trained on the machine. Their results moved in the
-  third decimal between an x86_64 workstation and the aarch64 cluster, so expect agreement to about
-  two decimals, not equality.
+- `cifar` and `octmnist` start from a model pre-trained on the machine. Their results move between an
+  x86_64 workstation and the aarch64 cluster (OCT-MNIST nominal accuracy 0.864 against 0.856), so
+  expect agreement to about a point, not equality.
 - Run times and GPU counts in the records depend on the hardware. The reference CIFAR-10, OCT-MNIST
   and half-moons runs are from Isambard-AI (GH200, 1 or 4 GPUs per run) and MAGIC from a workstation
   with two RTX 5090s.

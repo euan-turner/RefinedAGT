@@ -17,8 +17,10 @@ set -euo pipefail
 TASK=${1:?usage: submit.sh <task> [run.py options]}
 shift
 D="$AGT_REPO/scripts/refinement_paper"
-M="$AGT_ROOT/manifests/$TASK-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$M" "$AGT_ROOT/logs"
+mkdir -p "$AGT_ROOT/manifests" "$AGT_ROOT/logs"
+# unique even when one task is submitted several times a second (reproduce.sh): a 1-GPU job reads its
+# run list when it starts, so a later submission must never overwrite it
+M=$(mktemp -d "$AGT_ROOT/manifests/$TASK-$(date +%Y%m%d-%H%M%S)-XXXX")
 
 cd "$D"
 python run.py "$TASK" "$@" --list --gpus 1 --missing > "$M/1gpu.txt"
