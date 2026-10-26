@@ -1,0 +1,213 @@
+{
+ "task": "magic",
+ "title": "MAGIC ($d=10$)",
+ "cells": [
+  {
+   "k": 25,
+   "epsilon": 0.1,
+   "baseline": {
+    "task": "magic",
+    "k": 25,
+    "epsilon": 0.1,
+    "rung": "unrefined",
+    "splits": null,
+    "leaves": 1,
+    "dtype": "float64",
+    "violation": 0.0,
+    "seconds": 2.647561550140381,
+    "world_size": 1,
+    "peak_gib": 0.4148240089416504,
+    "metrics": {
+     "cert_acc": 0.5015772581100464,
+     "nominal_acc": 0.7891692519187927,
+     "best_acc": 0.928496241569519,
+     "majority_acc": 0.6482649842271293,
+     "box_width": 13.940946591049087
+    }
+   },
+   "rungs": [
+    {
+     "task": "magic",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "2^5",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 32,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 2.5222666263580322,
+     "world_size": 1,
+     "peak_gib": 5.064436435699463,
+     "metrics": {
+      "cert_acc": 0.5688748359680176,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.9129862785339355,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 11.406938996796942
+     }
+    },
+    {
+     "task": "magic",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "2^10",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 1024,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 9.440336227416992,
+     "world_size": 1,
+     "peak_gib": 14.801319122314453,
+     "metrics": {
+      "cert_acc": 0.6253942847251892,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8951103687286377,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 9.108271839334265
+     }
+    },
+    {
+     "task": "magic",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "3^5x2^5",
+     "splits": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 7776,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 54.08329916000366,
+     "world_size": 1,
+     "peak_gib": 14.800861358642578,
+     "metrics": {
+      "cert_acc": 0.63985276222229,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8864352703094482,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 8.301009978604712
+     }
+    },
+    {
+     "task": "magic",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "3^10",
+     "splits": [
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+     ],
+     "leaves": 59049,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 392.4538674354553,
+     "world_size": 1,
+     "peak_gib": 14.80173110961914,
+     "metrics": {
+      "cert_acc": 0.6548369526863098,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8798632621765137,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 7.568644173940115
+     }
+    },
+    {
+     "task": "magic",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "4^5x3^5",
+     "splits": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      3,
+      3,
+      3,
+      3,
+      3
+     ],
+     "leaves": 248832,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 419.0845355987549,
+     "world_size": 4,
+     "peak_gib": 14.801740169525146,
+     "metrics": {
+      "cert_acc": 0.6643006801605225,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8753942847251892,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 7.180021471103941
+     }
+    },
+    {
+     "task": "magic",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "4^10",
+     "splits": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+     ],
+     "leaves": 1048576,
+     "dtype": "float64",
+     "violation": 0.0,
+     "seconds": 1736.615386247635,
+     "world_size": 4,
+     "peak_gib": 14.801461219787598,
+     "metrics": {
+      "cert_acc": 0.6732386350631714,
+      "nominal_acc": 0.7891692519187927,
+      "best_acc": 0.8722397089004517,
+      "majority_acc": 0.6482649842271293,
+      "box_width": 6.827470028583006
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,72 @@
+{
+ "task": "octmnist",
+ "title": "OCT-MNIST (PCA, $d=15$)",
+ "cells": [
+  {
+   "k": 25,
+   "epsilon": 0.1,
+   "baseline": {
+    "task": "octmnist",
+    "k": 25,
+    "epsilon": 0.1,
+    "rung": "unrefined",
+    "splits": null,
+    "leaves": 1,
+    "dtype": "float32",
+    "violation": 0.0,
+    "seconds": 3.364393711090088,
+    "world_size": 1,
+    "peak_gib": 0.31696033477783203,
+    "metrics": {
+     "cert_acc": 0.8160000443458557,
+     "nominal_acc": 0.8640000224113464,
+     "cert_ce": 0.5468049049377441,
+     "nominal_ce": 0.5277259945869446,
+     "cert_clean_acc": 0.734666645526886,
+     "nominal_clean_acc": 0.7559999823570251,
+     "box_width": 1.1836817115545273
+    }
+   },
+   "rungs": [
+    {
+     "task": "octmnist",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "2^15",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 32768,
+     "dtype": "float32",
+     "violation": 0.0,
+     "seconds": 189.97298884391785,
+     "world_size": 1,
+     "peak_gib": 2.4655323028564453,
+     "metrics": {
+      "cert_acc": 0.8160000443458557,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.5450330972671509,
+      "nominal_ce": 0.5277259945869446,
+      "cert_clean_acc": 0.7360000014305115,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 1.064160831272602
+     }
+    }
+   ]
+  }
+ ]
+}

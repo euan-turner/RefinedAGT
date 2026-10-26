@@ -217,9 +217,7 @@ def _reference(name):
         return json.load(file)
 
 
-@pytest.mark.parametrize("name", tasks.NAMES)
-def test_reference_results_hold_each_tasks_whole_ladder(name):
-    (cell,) = _reference(name)["cells"]
+def _assert_sound_cell(cell):
     assert cell["baseline"]["rung"] == "unrefined"
     rungs = [record["rung"] for record in cell["rungs"]]
     assert all(harness.rung_label(harness.parse_rung(rung)) == rung for rung in rungs)
@@ -230,6 +228,25 @@ def test_reference_results_hold_each_tasks_whole_ladder(name):
         # refinement never loosens the certificate
         assert record["metrics"]["box_width"] <= cell["baseline"]["metrics"]["box_width"]
         assert record["metrics"]["cert_acc"] >= cell["baseline"]["metrics"]["cert_acc"]
+
+
+@pytest.mark.parametrize("name", tasks.NAMES)
+def test_reference_results_hold_each_tasks_whole_ladder(name):
+    (cell,) = _reference(name)["cells"]
+    _assert_sound_cell(cell)
+
+
+@pytest.mark.parametrize("name", tasks.NAMES)
+def test_reference_results_hold_each_tasks_small_k_runs_and_threat_grid(name):
+    (cell,) = _reference(f"{name}_smallk")["cells"]
+    assert (cell["k"], cell["rungs"] != []) == (25, True)
+    _assert_sound_cell(cell)
+    grid = _reference(f"{name}_threat")["cells"]
+    assert sorted((c["k"], c["epsilon"]) for c in grid) == [
+        (k, e) for k in (5, 10, 25, 50, 100, 200) for e in (0.005, 0.01, 0.02, 0.05, 0.1, 0.2)
+    ]
+    for c in grid:
+        _assert_sound_cell(c)
 
 
 def test_halfmoons_reproduces_its_reference_results():
@@ -246,10 +263,7 @@ def test_halfmoons_reproduces_its_reference_results():
             assert record["metrics"][metric] == pytest.approx(expected["metrics"][metric], rel=1e-9)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="reference/octmnist.json holds the eps=0.1 ladder; the OCT-MNIST ladder attack is now eps=0.02"
-)
-def test_the_figure_draws_from_the_reference_results():
+def test_the_figures_draw_from_the_reference_results():
     pytest.importorskip("matplotlib")
     pytest.importorskip("scienceplots")
     pytest.importorskip("sklearn")
@@ -261,20 +275,31 @@ def test_the_figure_draws_from_the_reference_results():
 
     reference = os.path.join(SCRIPTS, "reference")
     panel = plot_ladders.load_panel(reference, "magic")
-    assert panel["title"] == "MAGIC ($d=10$), $k=200$, $\\epsilon=0.01$"
     assert [rung["label"] for rung in panel["rungs"]] == [
         "2^{5}", "2^{10}", "3^{5}\\cdot2^{5}", "3^{10}", "4^{5}\\cdot3^{5}", "4^{10}"
     ]
     assert [rung["bisection"] for rung in panel["rungs"]] == [True, True, False, False, False, False]
+    # the small-k ladder drawn over it has the same rungs
+    assert (panel["small_k"]["k"], panel["small_k"]["epsilon"]) == (25, 0.1)
+    assert [r["rung"] for r in panel["small_k"]["rungs"]] == [r["rung"] for r in panel["rungs"]]
+    assert plot_ladders.load_panel(reference, "cifar")["small_k"] is None
 
     figure = plot_ladders.make_figure(reference)
     assert len(figure.axes) == 4
     assert [ax.get_title() for ax in figure.axes] == [
         "CIFAR-10 (PCA, $d=20$), $k=200$, $\\epsilon=0.02$",
         "OCT-MNIST (PCA, $d=15$), $k=200$, $\\epsilon=0.02$",
-        "half-moons ($d=6$), $k=200$, $\\epsilon=0.01$",
-        "MAGIC ($d=10$), $k=200$, $\\epsilon=0.01$",
+        "half-moons ($d=6$): $k=200$, $\\epsilon=0.01$ and $k=25$, $\\epsilon=0.05$",
+        "MAGIC ($d=10$): $k=200$, $\\epsilon=0.01$ and $k=25$, $\\epsilon=0.1$",
     ]
+    # OCT-MNIST's 3^d series is the one finer-cut line on its panel; 4^10 stands alone
+    finer_lines = [line for line in figure.axes[1].lines
+                   if line.get_color() == plot_ladders.FINER and len(line.get_xdata()) > 1]
+    assert [list(line.get_xdata()) for line in finer_lines] == [[3**10, 3**12, 3**15]]
+
+    import plot_threat_grid
+
+    assert len(plot_threat_grid.make_figure(reference).axes) == len(tasks.NAMES) + 1  # and the colour bar
 
 
 def _gap_results(task, ks, epsilons):

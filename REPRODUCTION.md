@@ -11,7 +11,7 @@ There are three routes, in increasing cost:
 
 | Route | What it reproduces | Cost |
 |---|---|---|
-| [A. Figure from the shipped results](#a-figure-from-the-shipped-results) | the published ladder figure | seconds, no GPU |
+| [A. Figure from the shipped results](#a-figure-from-the-shipped-results) | the published figures | seconds, no GPU |
 | [B. Slurm cluster (Isambard-AI)](#b-full-reproduction-on-isambard-ai) | every run, the tables, both figures | 34 jobs, about 61 GPU-hours |
 | [C. One workstation](#c-full-reproduction-on-one-workstation) | the same | about 61 GPU-hours in sequence |
 
@@ -95,13 +95,14 @@ On Isambard-AI this is part of step 3 of route B and is not run by hand.
 
 ## A. Figure from the shipped results
 
-[scripts/refinement_paper/reference/](scripts/refinement_paper/reference) holds the results files the
-published ladder figure was drawn from. No training and no GPU (`reference/octmnist.json` is still the
-earlier eps=0.1 ladder, so this fails until it is replaced by the eps=0.02 one):
+[scripts/refinement_paper/reference/](scripts/refinement_paper/reference) holds the results file of
+every experiment and, in `reference/figures/`, the published figures drawn from them. To redraw them,
+with no training and no GPU:
 
 ```bash
 cd scripts/refinement_paper
-python plot_ladders.py --results reference     # -> .figures/refinement_ladders.{pdf,png}
+python plot_ladders.py --results reference         # -> .figures/refinement_ladders.{pdf,png}
+python plot_threat_grid.py --results reference     # -> .figures/threat_grid.{pdf,png}
 ```
 
 ## B. Full reproduction on Isambard-AI
@@ -214,18 +215,17 @@ command that reruns it; `reproduce.sh list --missing` lists all of them.
 
 ## Checking the result
 
-Compare the ladder tables `reproduce.sh results` prints, or `.results/<task>.json`, with the file of
+Compare the tables `reproduce.sh results` prints, or `.results/<name>.json`, with the file of
 the same name in [scripts/refinement_paper/reference/](scripts/refinement_paper/reference). Each record's
 `metrics` holds `cert_acc`, `nominal_acc` and `box_width`.
 
 - `halfmoons` and `magic` start from a seeded initialisation and reproduce the reference values across
   machines.
-- `cifar` and `octmnist` start from a model pre-trained on the machine. Their results move between an
-  x86_64 workstation and the aarch64 cluster (OCT-MNIST nominal accuracy 0.864 against 0.856), so
-  expect agreement to about a point, not equality.
-- Run times and GPU counts in the records depend on the hardware. The reference CIFAR-10, OCT-MNIST
-  and half-moons runs are from Isambard-AI (GH200, 1 or 4 GPUs per run) and MAGIC from a workstation
-  with two RTX 5090s.
+- `cifar` and `octmnist` start from a PCA basis and a model pre-trained on the machine. Between an
+  x86_64 workstation and the aarch64 cluster their certified and nominal accuracies were identical;
+  box widths differed by up to 3e-4 relative (float32).
+- Run times and GPU counts in the records depend on the hardware. The reference runs are from
+  Isambard-AI (GH200, 1 or 4 GPUs per run), except the k=200 MAGIC ladder, from a workstation with two
+  RTX 5090s.
 
-`python plot_ladders.py --results reference --out <dir>` draws the published figure for a side-by-side
-comparison with the reproduced one.
+`reference/figures/` holds the published figures for a side-by-side comparison with the reproduced ones.

@@ -1,0 +1,77 @@
+{
+ "task": "cifar",
+ "title": "CIFAR-10 (PCA, $d=20$)",
+ "cells": [
+  {
+   "k": 25,
+   "epsilon": 0.1,
+   "baseline": {
+    "task": "cifar",
+    "k": 25,
+    "epsilon": 0.1,
+    "rung": "unrefined",
+    "splits": null,
+    "leaves": 1,
+    "dtype": "float32",
+    "violation": 0.0,
+    "seconds": 1.728118658065796,
+    "world_size": 1,
+    "peak_gib": 0.8820791244506836,
+    "metrics": {
+     "cert_acc": 0.7610000371932983,
+     "nominal_acc": 0.7950000166893005,
+     "cert_ce": 0.4878982901573181,
+     "nominal_ce": 0.4274134933948517,
+     "cert_clean_acc": 0.7475555539131165,
+     "nominal_clean_acc": 0.7888888716697693,
+     "box_width": 4.325319402851164
+    }
+   },
+   "rungs": [
+    {
+     "task": "cifar",
+     "k": 25,
+     "epsilon": 0.1,
+     "rung": "2^20",
+     "splits": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "leaves": 1048576,
+     "dtype": "float32",
+     "violation": 0.0,
+     "seconds": 918.5902383327484,
+     "world_size": 4,
+     "peak_gib": 11.893426418304443,
+     "metrics": {
+      "cert_acc": 0.7630000114440918,
+      "nominal_acc": 0.7950000166893005,
+      "cert_ce": 0.4845792353153229,
+      "nominal_ce": 0.4274134933948517,
+      "cert_clean_acc": 0.7482222318649292,
+      "nominal_clean_acc": 0.7888888716697693,
+      "box_width": 4.122097486630082
+     }
+    }
+   ]
+  }
+ ]
+}

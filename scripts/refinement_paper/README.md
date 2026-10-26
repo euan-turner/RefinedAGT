@@ -23,7 +23,7 @@ its data, model, schedule and what its metrics mean.
 | `octmnist` | OCT-MNIST, 15 PCA features, float32 | k=200, eps=0.02 | 2^5 2^10 2^15 3^10 3^12 4^10 3^15 | 26.7 |
 | `halfmoons` | half-moons, 6 features, float64 | k=200, eps=0.01 | 2^6 3^6 4^6 5^6 6^6 8^6 10^6 12^6 16^6 | 8.8 |
 | `magic` | MAGIC gamma telescope, 10 features, float64 | k=200, eps=0.01 | 2^5 2^10 3^5x2^5 3^10 4^5x3^5 4^10 | 6.8 |
-| **Small k, large eps** | | | | |
+| **Small k, large eps** (half-moons and MAGIC drawn over their k=200 ladders in `refinement_ladders.pdf`) | | | | |
 | `halfmoons_smallk` | half-moons | k=25, eps=0.05 | the half-moons ladder | 8.8 |
 | `magic_smallk` | MAGIC | k=25, eps=0.1 | the MAGIC ladder | 6.8 |
 | `cifar_smallk` | CIFAR-10 | k=25, eps=0.1 | 2^20 | 1.0 |
@@ -64,9 +64,9 @@ l_inf distance from a poisonable training point to its nearest training point of
 | [`harness.py`](harness.py) | one cached certified run; the rung grammar; which record is reported |
 | [`run.py`](run.py) | launches runs. The only script that trains |
 | [`aggregate.py`](aggregate.py) | cached runs of one task into a table and a results file |
-| [`plot_ladders.py`](plot_ladders.py) | the paper figure, from the four ladder results files |
+| [`plot_ladders.py`](plot_ladders.py) | the paper figure, from the four ladder results files and the half-moons and MAGIC small-k files |
 | [`plot_threat_grid.py`](plot_threat_grid.py) | the threat-model grid figure, from the four `<task>_threat.json` files |
-| [`reference/`](reference) | results files behind the published figure |
+| [`reference/`](reference) | the results file of every experiment, and the figures drawn from them (`reference/figures/`) |
 | [`isambard/`](isambard) | Slurm launchers for Isambard-AI |
 
 Outputs go under `$AGT_ROOT` when it is set, otherwise next to these scripts: `.results/` (runs and
@@ -84,10 +84,12 @@ cd scripts/refinement_paper
 
 ## Reproducing the results
 
-The paper figure from the shipped results, with no training:
+The figures from the shipped results, with no training (the copies in `reference/figures/` were drawn
+this way):
 
 ```bash
-python plot_ladders.py --results reference     # -> .figures/refinement_ladders.{pdf,png}
+python plot_ladders.py --results reference         # -> .figures/refinement_ladders.{pdf,png}
+python plot_threat_grid.py --results reference     # -> .figures/threat_grid.{pdf,png}
 ```
 
 Everything from scratch:
@@ -128,22 +130,21 @@ its place. `reproduce.sh list --missing` and `isambard` include those reruns.
 
 ### Reproducibility across machines
 
-Half-moons and MAGIC start from a seeded initialisation and reproduce across machines. CIFAR-10 and
-OCT-MNIST start from a model pre-trained on the machine, and their results move between machines (the
-OCT-MNIST nominal accuracy is 0.856 on Isambard-AI and 0.864 on an x86_64 workstation). The PCA basis
-and pre-trained model are cached under `.data/` and `.models/`, so all runs on one machine share one
-starting point; take every result of a paper from one machine.
+Half-moons and MAGIC start from a seeded initialisation. CIFAR-10 and OCT-MNIST start from a PCA basis
+and a model pre-trained on the machine, cached under `.data/` and `.models/` so that all runs on one
+machine share one starting point. Between Isambard-AI (aarch64) and an x86_64 workstation, 173 runs of
+these experiments gave identical certified and nominal accuracy on all four tasks; box widths differed
+by up to 3e-4 relative on the float32 image tasks and 6e-16 on the float64 tabular ones.
 
 ## Reference results
 
-[`reference/`](reference) holds the results files the published figure was drawn from. CIFAR-10,
-OCT-MNIST and half-moons were run on Isambard-AI (GH200, 1 or 4 GPUs per run) and MAGIC on a
-workstation with two RTX 5090s. They were produced by the code before it was restructured into this
-directory and converted to the current file format; the restructured code reproduces the half-moons
-and MAGIC values, and the test suite checks the cheapest half-moons rungs against them.
-
-`reference/octmnist.json` is still the earlier OCT-MNIST ladder at eps=0.1, so
-`plot_ladders.py --results reference` fails until it is replaced by the eps=0.02 ladder.
+[`reference/`](reference) holds the results file of every experiment in `reproduce.sh`, named as
+`reproduce.sh results` names them, and in `reference/figures/` the figures drawn from them. The CIFAR-10,
+half-moons and MAGIC ladders at k=200 were produced by the code before it was restructured into this directory (CIFAR-10
+and half-moons on Isambard-AI, GH200 with 1 or 4 GPUs per run; MAGIC on a workstation with two RTX
+5090s) and converted to the current file format; the restructured code reproduces their values, and the
+test suite checks the cheapest half-moons rungs against them. The OCT-MNIST ladder and every small-k and
+threat-grid file were run on Isambard-AI with the restructured code.
 
 ## Running on Isambard-AI
 

@@ -4,34 +4,34 @@
  "cells": [
   {
    "k": 200,
-   "epsilon": 0.1,
+   "epsilon": 0.02,
    "baseline": {
     "task": "octmnist",
     "k": 200,
-    "epsilon": 0.1,
+    "epsilon": 0.02,
     "rung": "unrefined",
     "splits": null,
     "leaves": 1,
     "dtype": "float32",
     "violation": 0.0,
-    "seconds": 4.736527442932129,
-    "world_size": 4,
-    "peak_gib": 0.34839439392089844,
+    "seconds": 3.4859440326690674,
+    "world_size": 1,
+    "peak_gib": 0.31696033477783203,
     "metrics": {
-     "cert_acc": 0.5240000486373901,
-     "nominal_acc": 0.8560000658035278,
-     "cert_ce": 0.6814664006233215,
-     "nominal_ce": 0.5285760760307312,
-     "cert_clean_acc": 0.5666666626930237,
-     "nominal_clean_acc": 0.762666642665863,
-     "box_width": 7.622782737016678
+     "cert_acc": 0.6880000233650208,
+     "nominal_acc": 0.8640000224113464,
+     "cert_ce": 0.6098169088363647,
+     "nominal_ce": 0.5277259945869446,
+     "cert_clean_acc": 0.6506666541099548,
+     "nominal_clean_acc": 0.7559999823570251,
+     "box_width": 3.5722078680992126
     }
    },
    "rungs": [
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "2^5",
      "splits": [
       2,
@@ -43,23 +43,23 @@
      "leaves": 32,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 4.064816951751709,
+     "seconds": 3.7813942432403564,
      "world_size": 1,
-     "peak_gib": 2.3980712890625,
+     "peak_gib": 2.398037910461426,
      "metrics": {
-      "cert_acc": 0.527999997138977,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.6748130321502686,
-      "nominal_ce": 0.528575599193573,
-      "cert_clean_acc": 0.5706666707992554,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 7.3082708567380905
+      "cert_acc": 0.6880000233650208,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6089110374450684,
+      "nominal_ce": 0.5277259945869446,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.5305276662111282
      }
     },
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "2^10",
      "splits": [
       2,
@@ -76,23 +76,23 @@
      "leaves": 1024,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 9.188664436340332,
+     "seconds": 9.070250511169434,
      "world_size": 1,
-     "peak_gib": 2.3980712890625,
+     "peak_gib": 2.4641294479370117,
      "metrics": {
-      "cert_acc": 0.5600000023841858,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.6679511070251465,
-      "nominal_ce": 0.528575599193573,
-      "cert_clean_acc": 0.5773333311080933,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 6.990664556622505
+      "cert_acc": 0.6960000395774841,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6080249547958374,
+      "nominal_ce": 0.5277259945869446,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.489766910672188
      }
     },
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "2^15",
      "splits": [
       2,
@@ -114,23 +114,23 @@
      "leaves": 32768,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 49.157857179641724,
-     "world_size": 4,
-     "peak_gib": 2.4293622970581055,
+     "seconds": 173.400470495224,
+     "world_size": 1,
+     "peak_gib": 2.4641294479370117,
      "metrics": {
-      "cert_acc": 0.5640000104904175,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.6644307374954224,
-      "nominal_ce": 0.5285760760307312,
-      "cert_clean_acc": 0.5839999914169312,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 6.8482071459293365
+      "cert_acc": 0.6960000395774841,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6075793504714966,
+      "nominal_ce": 0.5277259945869446,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.471129357814789
      }
     },
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "3^10",
      "splits": [
       3,
@@ -147,23 +147,23 @@
      "leaves": 59049,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 296.42518043518066,
+     "seconds": 310.90195083618164,
      "world_size": 1,
-     "peak_gib": 2.3980712890625,
+     "peak_gib": 2.4641294479370117,
      "metrics": {
-      "cert_acc": 0.5640000104904175,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.6632270812988281,
-      "nominal_ce": 0.528575599193573,
-      "cert_clean_acc": 0.5879999995231628,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 6.766212239861488
+      "cert_acc": 0.6960000395774841,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6074427366256714,
+      "nominal_ce": 0.5277259945869446,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.461938053369522
      }
     },
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "3^12",
      "splits": [
       3,
@@ -182,23 +182,23 @@
      "leaves": 531441,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 699.4131319522858,
+     "seconds": 713.1966388225555,
      "world_size": 4,
-     "peak_gib": 2.398268222808838,
+     "peak_gib": 2.464351177215576,
      "metrics": {
-      "cert_acc": 0.5640000104904175,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.6615939140319824,
-      "nominal_ce": 0.5285760760307312,
-      "cert_clean_acc": 0.5879999995231628,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 6.695737108588219
+      "cert_acc": 0.7040000557899475,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6072477698326111,
+      "nominal_ce": 0.5277259349822998,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.4528944194316864
      }
     },
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "4^10",
      "splits": [
       4,
@@ -215,23 +215,23 @@
      "leaves": 1048576,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 1364.3551847934723,
+     "seconds": 1415.7710077762604,
      "world_size": 4,
-     "peak_gib": 2.3979620933532715,
+     "peak_gib": 2.46388578414917,
      "metrics": {
-      "cert_acc": 0.5640000104904175,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.660993218421936,
-      "nominal_ce": 0.5285760760307312,
-      "cert_clean_acc": 0.5879999995231628,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 6.657675340771675
+      "cert_acc": 0.7040000557899475,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6071837544441223,
+      "nominal_ce": 0.5277259349822998,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.4491503834724426
      }
     },
     {
      "task": "octmnist",
      "k": 200,
-     "epsilon": 0.1,
+     "epsilon": 0.02,
      "rung": "3^15",
      "splits": [
       3,
@@ -253,17 +253,17 @@
      "leaves": 14348907,
      "dtype": "float32",
      "violation": 0.0,
-     "seconds": 18748.493743419647,
+     "seconds": 19406.342987298965,
      "world_size": 4,
-     "peak_gib": 2.398268222808838,
+     "peak_gib": 2.4633612632751465,
      "metrics": {
-      "cert_acc": 0.5680000185966492,
-      "nominal_acc": 0.8560000658035278,
-      "cert_ce": 0.6587681770324707,
-      "nominal_ce": 0.5285760760307312,
-      "cert_clean_acc": 0.5893333554267883,
-      "nominal_clean_acc": 0.762666642665863,
-      "box_width": 6.580437168478966
+      "cert_acc": 0.7040000557899475,
+      "nominal_acc": 0.8640000224113464,
+      "cert_ce": 0.6069185733795166,
+      "nominal_ce": 0.5277259349822998,
+      "cert_clean_acc": 0.6520000100135803,
+      "nominal_clean_acc": 0.7559999823570251,
+      "box_width": 3.4392354488372803
      }
     }
    ]
